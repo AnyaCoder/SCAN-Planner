@@ -147,9 +147,6 @@ namespace scan_planner
       return;
     }
 
-    if (msg->poses[0].pose.position.z < -0.1)
-      return;
-
     cout << "Triggered!" << endl;
     trigger_ = true;
     init_pt_ = odom_pos_;
