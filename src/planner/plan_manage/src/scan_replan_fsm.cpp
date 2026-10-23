@@ -25,7 +25,6 @@ namespace scan_planner
     have_target_ = false;
     have_odom_ = false;
     have_new_target_ = false;
-    rviz_height_ready_ = false;
     go2_execution_frozen_ = false;
     flag_escape_emergency_ = true;
     need_hover_stop_ = false;
@@ -125,15 +124,17 @@ namespace scan_planner
     if (!msg)
       return;
 
-    if (!rviz_height_ready_)
+    if (!have_odom_)
     {
       RCLCPP_WARN(node_->get_logger(), "Ignore RViz goal before receiving initial body pose");
       return;
     }
 
+    auto goal = *msg;
+    goal.pose.position.z = odom_pos_(2);
     auto path = std::make_shared<nav_msgs::msg::Path>();
-    path->header = msg->header;
-    path->poses.push_back(*msg);
+    path->header = goal.header;
+    path->poses.push_back(goal);
     waypointCallback(path);
   }
 
@@ -154,7 +155,7 @@ namespace scan_planner
     init_pt_ = odom_pos_;
 
     bool success = false;
-    end_pt_ << msg->poses[0].pose.position.x, msg->poses[0].pose.position.y, rviz_goal_height_;
+    end_pt_ << msg->poses[0].pose.position.x, msg->poses[0].pose.position.y, msg->poses[0].pose.position.z;
     success = planner_manager_->planGlobalTraj(odom_pos_, odom_vel_, Eigen::Vector3d::Zero(), end_pt_, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero());
 
     if (success)
@@ -385,13 +386,6 @@ namespace scan_planner
     odom_pos_(0) = msg->pose.pose.position.x;
     odom_pos_(1) = msg->pose.pose.position.y;
     odom_pos_(2) = msg->pose.pose.position.z;
-
-    if (navi_mode_ == NAVI_MODE::MANUAL_TARGET && !rviz_height_ready_)
-    {
-      rviz_goal_height_ = odom_pos_(2);
-      rviz_height_ready_ = true;
-      RCLCPP_INFO(node_->get_logger(), "Set RViz goal height from initial body_pose z: %.3f", rviz_goal_height_);
-    }
 
     odom_vel_(0) = msg->twist.twist.linear.x;
     odom_vel_(1) = msg->twist.twist.linear.y;

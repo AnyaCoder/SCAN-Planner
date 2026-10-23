@@ -57,7 +57,6 @@ namespace scan_planner
     int waypoint_num_;
     double planning_horizon_;
     double emergency_time_;
-    double rviz_goal_height_;
     double self_inflation_z_up_, self_inflation_z_down_;
     double self_double_cylinder_radius_, self_double_cylinder_offset_;
     double body_height_;
@@ -66,7 +65,6 @@ namespace scan_planner
     /* planning data */
     bool trigger_, have_target_, have_odom_, have_new_target_;
     bool preset_started_{false};
-    bool rviz_height_ready_;
     bool go2_execution_frozen_;
     bool enable_fail_safe_, need_hover_stop_;
     FSM_EXEC_STATE exec_state_;
