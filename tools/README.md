@@ -13,7 +13,7 @@ The generated file is a ROS 2 parameter file containing the flat
 # FAST-LIO2 (ROS 2 Foxy)
 
 `install_fastlio_foxy.sh` checks out the pinned FAST-LIO2 revision, applies
-`patches/fast_lio_foxy_service_callback.patch`, and builds `fast_lio`:
+the Foxy, TF-remap, and gravity-alignment patches, and builds `fast_lio`:
 
 ```bash
 ./tools/install_fastlio_foxy.sh ~/fastlio_ws
@@ -21,6 +21,23 @@ The generated file is a ROS 2 parameter file containing the flat
 
 The Go2 deployment and runtime sequence are documented in the repository root
 `必看.md`.
+
+# World alignment calibration
+
+`calibrate_world_alignment.py` fits the local ground plane from
+`/grid_map/occupancy` and prints the quaternion for
+`src/planner/lio_bridge/config/fastlio_bridge.yaml`:
+
+```bash
+source /opt/ros/foxy/setup.bash
+source install/local_setup.bash
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export CYCLONEDDS_URI=file://$HOME/.config/ros2/cyclonedds.xml
+python3 tools/calibrate_world_alignment.py
+```
+
+Run it on a stationary robot with a fresh map. The default `1.5 m` radius and
+lowest `12%` height band isolate the floor around the robot.
 
 # Wi-Fi TCP state bridge
 

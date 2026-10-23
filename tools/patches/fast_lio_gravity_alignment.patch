@@ -1,0 +1,22 @@
+--- a/src/IMU_Processing.hpp
++++ b/src/IMU_Processing.hpp
+@@ -190,9 +190,16 @@
+     N ++;
+   }
+   state_ikfom init_state = kf_state.get_x();
+-  init_state.grav = S2(- mean_acc / mean_acc.norm() * G_m_s2);
+-  
+-  //state_inout.rot = Eye3d; // Exp(mean_acc.cross(V3D(0, 0, -1 / scale_gravity)));
++  const V3D up_body = mean_acc / mean_acc.norm();
++  const V3D up_world(0.0, 0.0, 1.0);
++  const V3D rotation_axis = up_body.cross(up_world);
++  const double rotation_angle = std::acos(
++    std::max(-1.0, std::min(1.0, up_body.dot(up_world))));
++  if (rotation_axis.norm() > 1e-9)
++    init_state.rot = Exp(V3D(rotation_axis.normalized() * rotation_angle));
++  else
++    init_state.rot = Eye3d;
++  init_state.grav = S2(- (init_state.rot * up_body) * G_m_s2);
+   init_state.bg  = mean_gyr;
+   init_state.offset_T_L_I = Lidar_T_wrt_IMU;
+   init_state.offset_R_L_I = Lidar_R_wrt_IMU;

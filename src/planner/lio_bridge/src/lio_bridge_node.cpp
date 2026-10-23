@@ -15,6 +15,8 @@
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
+#include "tf2/LinearMath/Quaternion.h"
+#include "tf2/LinearMath/Vector3.h"
 #include "tf2_ros/transform_broadcaster.h"
 
 namespace lio_bridge
@@ -137,6 +139,11 @@ public:
     max_velocity_ = declare_parameter<double>("max_velocity", 2.0);
     velocity_deadband_ = declare_parameter<double>("velocity_deadband", 0.12);
     max_timestamp_gap_sec_ = declare_parameter<double>("max_timestamp_gap_sec", 0.25);
+    const auto alignment_x = declare_parameter<double>("world_alignment_x", 0.0);
+    const auto alignment_y = declare_parameter<double>("world_alignment_y", 0.0);
+    const auto alignment_z = declare_parameter<double>("world_alignment_z", 0.0);
+    const auto alignment_w = declare_parameter<double>("world_alignment_w", 1.0);
+    align_base_on_start_ = declare_parameter<bool>("align_base_on_start", true);
 
     if (velocity_window_sec_ <= 0.0 || max_velocity_ <= 0.0 ||
       velocity_deadband_ < 0.0 || velocity_deadband_ >= max_velocity_ ||
@@ -144,6 +151,12 @@ public:
     {
       throw std::invalid_argument("velocity and timestamp-gap parameters must be positive");
     }
+    world_alignment_ = tf2::Quaternion(
+      alignment_x, alignment_y, alignment_z, alignment_w);
+    if (!std::isfinite(world_alignment_.length()) || world_alignment_.length() < 1e-9) {
+      throw std::invalid_argument("world alignment quaternion must be finite and non-zero");
+    }
+    world_alignment_.normalize();
     velocity_estimator_ = VelocityEstimator(
       velocity_window_sec_, max_velocity_, max_timestamp_gap_sec_, velocity_deadband_);
 
@@ -184,9 +197,12 @@ public:
 
     RCLCPP_INFO(
         get_logger(),
-        "LIO bridge ready: odom=%s, cloud=%s, output frame=%s child=%s",
+        "LIO bridge ready: odom=%s, cloud=%s, output frame=%s child=%s, "
+        "world alignment=(%.6f, %.6f, %.6f, %.6f)",
         odom_topic_.c_str(), cloud_topic_.c_str(),
-        output_frame_id_.c_str(), output_child_frame_id_.c_str());
+        output_frame_id_.c_str(), output_child_frame_id_.c_str(),
+        world_alignment_.x(), world_alignment_.y(), world_alignment_.z(),
+        world_alignment_.w());
   }
 
 private:
@@ -197,10 +213,53 @@ private:
     output = input;
     output.header.frame_id = output_frame_id_;
     output.child_frame_id = output_child_frame_id_;
+
+    tf2::Quaternion input_rotation(
+      input.pose.pose.orientation.x, input.pose.pose.orientation.y,
+      input.pose.pose.orientation.z, input.pose.pose.orientation.w);
+    if (input_rotation.length() < 1e-9) {
+      throw std::runtime_error("input odometry quaternion is zero");
+    }
+    input_rotation.normalize();
+
+    const tf2::Vector3 input_position(
+      input.pose.pose.position.x, input.pose.pose.position.y,
+      input.pose.pose.position.z);
+    const auto aligned_position = tf2::quatRotate(world_alignment_, input_position);
+    auto aligned_rotation = world_alignment_ * input_rotation;
+    aligned_rotation.normalize();
+
+    output.pose.pose.position.x = aligned_position.x();
+    output.pose.pose.position.y = aligned_position.y();
+    output.pose.pose.position.z = aligned_position.z();
+    output.pose.pose.orientation.x = aligned_rotation.x();
+    output.pose.pose.orientation.y = aligned_rotation.y();
+    output.pose.pose.orientation.z = aligned_rotation.z();
+    output.pose.pose.orientation.w = aligned_rotation.w();
+
     const auto & velocity = velocity_estimator_.velocity();
     output.twist.twist.linear.x = velocity[0];
     output.twist.twist.linear.y = velocity[1];
     output.twist.twist.linear.z = velocity[2];
+  }
+
+  void fillVehicleOdometry(
+    const nav_msgs::msg::Odometry & sensor_output,
+    const tf2::Quaternion & imu_to_base,
+    nav_msgs::msg::Odometry & output) const
+  {
+    output = sensor_output;
+
+    tf2::Quaternion sensor_rotation(
+      sensor_output.pose.pose.orientation.x, sensor_output.pose.pose.orientation.y,
+      sensor_output.pose.pose.orientation.z, sensor_output.pose.pose.orientation.w);
+    auto base_rotation = sensor_rotation * imu_to_base;
+    base_rotation.normalize();
+
+    output.pose.pose.orientation.x = base_rotation.x();
+    output.pose.pose.orientation.y = base_rotation.y();
+    output.pose.pose.orientation.z = base_rotation.z();
+    output.pose.pose.orientation.w = base_rotation.w();
   }
 
   void onOdom(const nav_msgs::msg::Odometry::ConstSharedPtr & msg)
@@ -218,37 +277,65 @@ private:
       stamp, msg->pose.pose.position.x, msg->pose.pose.position.y,
       msg->pose.pose.position.z);
 
-    nav_msgs::msg::Odometry output;
-    fillOutputOdometry(*msg, output);
-    vehicle_pub_->publish(output);
-    imu_pub_->publish(output);
+    nav_msgs::msg::Odometry sensor_output;
+    fillOutputOdometry(*msg, sensor_output);
+
+    tf2::Quaternion sensor_rotation(
+      sensor_output.pose.pose.orientation.x, sensor_output.pose.pose.orientation.y,
+      sensor_output.pose.pose.orientation.z, sensor_output.pose.pose.orientation.w);
+    tf2::Quaternion imu_to_base;
+    {
+      std::lock_guard<std::mutex> lock(base_alignment_mutex_);
+      if (!base_alignment_ready_) {
+        imu_to_base_ = align_base_on_start_ ?
+          sensor_rotation.inverse() : tf2::Quaternion::getIdentity();
+        imu_to_base_.normalize();
+        base_alignment_ready_ = true;
+        RCLCPP_INFO(
+          get_logger(), "IMU-to-base alignment=(%.6f, %.6f, %.6f, %.6f)",
+          imu_to_base_.x(), imu_to_base_.y(), imu_to_base_.z(), imu_to_base_.w());
+      }
+      imu_to_base = imu_to_base_;
+    }
+
+    nav_msgs::msg::Odometry vehicle_output;
+    fillVehicleOdometry(sensor_output, imu_to_base, vehicle_output);
+    vehicle_pub_->publish(vehicle_output);
+    imu_pub_->publish(sensor_output);
     velocity_norm_.store(velocity_estimator_.speedNorm());
     odom_vehicle_tx_.fetch_add(1, std::memory_order_relaxed);
     odom_imu_tx_.fetch_add(1, std::memory_order_relaxed);
-    broadcastOdometryTransform(*msg, stamp);
+    broadcastOdometryTransform(
+      vehicle_output, imu_to_base.inverse(), sensor_output.header.stamp, stamp);
   }
 
   void broadcastOdometryTransform(
-    const nav_msgs::msg::Odometry & input, double stamp_sec)
+    const nav_msgs::msg::Odometry & odom,
+    const tf2::Quaternion & base_to_body,
+    const builtin_interfaces::msg::Time & header_stamp,
+    double stamp_sec)
   {
     geometry_msgs::msg::TransformStamped transform;
     transform.header.frame_id = output_frame_id_;
     transform.child_frame_id = output_child_frame_id_;
-    transform.header.stamp = input.header.stamp;
+    transform.header.stamp = header_stamp;
     if (stamp_sec <= 0.0) {
       transform.header.stamp = now();
     }
-    transform.transform.translation.x = input.pose.pose.position.x;
-    transform.transform.translation.y = input.pose.pose.position.y;
-    transform.transform.translation.z = input.pose.pose.position.z;
-    transform.transform.rotation = input.pose.pose.orientation;
+    transform.transform.translation.x = odom.pose.pose.position.x;
+    transform.transform.translation.y = odom.pose.pose.position.y;
+    transform.transform.translation.z = odom.pose.pose.position.z;
+    transform.transform.rotation = odom.pose.pose.orientation;
     std::vector<geometry_msgs::msg::TransformStamped> transforms{transform};
     if (output_child_frame_id_ != "body") {
       auto sensor_transform = transform;
       sensor_transform.header.frame_id = output_child_frame_id_;
       sensor_transform.child_frame_id = "body";
       sensor_transform.transform = geometry_msgs::msg::Transform();
-      sensor_transform.transform.rotation.w = 1.0;
+      sensor_transform.transform.rotation.x = base_to_body.x();
+      sensor_transform.transform.rotation.y = base_to_body.y();
+      sensor_transform.transform.rotation.z = base_to_body.z();
+      sensor_transform.transform.rotation.w = base_to_body.w();
       transforms.push_back(sensor_transform);
     }
     tf_broadcaster_->sendTransform(transforms);
@@ -311,6 +398,11 @@ private:
   double max_velocity_;
   double velocity_deadband_;
   double max_timestamp_gap_sec_;
+  tf2::Quaternion world_alignment_;
+  bool align_base_on_start_;
+  tf2::Quaternion imu_to_base_;
+  bool base_alignment_ready_ = false;
+  std::mutex base_alignment_mutex_;
   VelocityEstimator velocity_estimator_;
 
   rclcpp::CallbackGroup::SharedPtr odom_callback_group_;
