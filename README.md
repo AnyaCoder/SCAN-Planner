@@ -10,11 +10,30 @@
   <img src="assets/images/abstract_real.jpg" width="100%"/>
 </p>
 
-SCAN-Planner 是一款面向四足机器人导航的空间碰撞感知局部规划器。本分支是原生 ROS 2 自移植版本，适配 Ubuntu 22.04、ROS 2 Humble、C++17 和 `colcon` 构建系统。
+SCAN-Planner 是一款面向四足机器人导航的空间碰撞感知局部规划器。本分支是原生 ROS 2 自移植版本，支持 Ubuntu 22.04 / ROS 2 Humble，并已在 Ubuntu 20.04 / ROS 2 Foxy（Go2 平台）上完成兼容迁移和本机编译验证。构建系统为 C++17 与 `colcon`。
 
 本仓库是 [wuyi2121/SCAN-Planner](https://github.com/wuyi2121/SCAN-Planner) 的衍生 ROS 2 移植版。核心算法、项目设计与原始研究工作归功于 Han Zheng、Zhe Chen、Yiwen Fu、Ming Yang 和 Tong Qin；ROS 2 适配由本仓库维护者完成，不代表原作者的官方发布或认可。
 
 ## 构建
+
+### ROS 2 Foxy（Ubuntu 20.04 / Go2）
+
+```bash
+source /opt/ros/foxy/setup.bash
+sudo apt install libarmadillo-dev libeigen3-dev libglm-dev \
+  libglew-dev libglfw3-dev libgl1-mesa-dev libglu1-mesa-dev
+
+rosdep install --from-paths src --ignore-src -r -y \
+  --skip-keys "ros_gz_sim ros_gz_bridge ros_gz_interfaces gz_ros2_control controller_manager"
+colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
+source install/setup.bash
+```
+
+`ros_gz_*` 与 Gazebo Fortress 仅用于可选的物理仿真，SCAN-Planner 自带的 CPU 点云仿真不依赖它们。Foxy 迁移细节见 [`FOXY_MIGRATION.md`](FOXY_MIGRATION.md)。
+
+Go2 实机部署、DDS/TCP 桥接和排障见 [`必看.md`](必看.md)，日常启动命令见 [`启动命令.md`](启动命令.md)。
+
+### ROS 2 Humble（Ubuntu 22.04）
 
 安装 ROS 2 Humble 及包依赖后，在工作空间根目录下执行构建：
 
@@ -64,7 +83,13 @@ source install/setup.bash
 ros2 launch scan_planner rviz.launch.py
 ```
 
-RViz2 配置已适配 ROS 2 Humble：Go2 的 RobotModel 使用现有的 `meshes/base.dae`，Sliding Map Bounds 订阅 `/grid_map/sliding_map_bbox`，Goal 订阅 `/goal_point`。
+实机使用真实传感器话题和 `world -> base -> body` TF 时改用：
+
+```bash
+ros2 launch scan_planner rviz.launch.py rviz_config:=real
+```
+
+RViz2 配置兼容 ROS 2 Humble 和 Foxy：Go2 的 RobotModel 使用现有的 `meshes/base.dae`，Sliding Map Bounds 订阅 `/grid_map/sliding_map_bbox`，Goal 订阅 `/goal_point`。
 
 
 

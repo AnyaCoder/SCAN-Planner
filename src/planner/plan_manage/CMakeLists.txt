@@ -52,7 +52,8 @@ install(TARGETS
   DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME} OPTIONAL)
-install(FILES launch/default.rviz DESTINATION share/${PROJECT_NAME}/rviz OPTIONAL)
+install(FILES launch/default.rviz launch/default_real.rviz
+  DESTINATION share/${PROJECT_NAME}/rviz OPTIONAL)
 install(PROGRAMS scripts/keypoint_recorder.py
   DESTINATION lib/${PROJECT_NAME} OPTIONAL)
 

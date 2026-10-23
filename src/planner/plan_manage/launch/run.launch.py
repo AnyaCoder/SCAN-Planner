@@ -1,17 +1,52 @@
 """Main ROS 2 launch entry point for simulation and real-robot remapping."""
 
+import atexit
 import os
+import tempfile
 
+import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import Command, LaunchConfiguration
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
 def _as_bool(value):
     return value.lower() in ("1", "true", "yes", "on")
+
+
+_temporary_parameter_files = []
+
+
+def _cleanup_temporary_parameter_files():
+    for path in _temporary_parameter_files:
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+
+
+atexit.register(_cleanup_temporary_parameter_files)
+
+
+def _write_node_parameter_file(node_name, parameters):
+    """Write launch overrides at node scope.
+
+    Foxy gives a node-specific YAML block precedence over launch_ros' ``/**``
+    wildcard dictionary regardless of argument order. Keeping the generated
+    override node-specific makes launch arguments authoritative.
+    """
+    handle = tempfile.NamedTemporaryFile(
+        mode="w", prefix=f"{node_name}_", suffix=".yaml", delete=False
+    )
+    try:
+        yaml.safe_dump({node_name: {"ros__parameters": parameters}}, handle)
+    finally:
+        handle.close()
+    _temporary_parameter_files.append(handle.name)
+    return handle.name
 
 
 def _setup(context):
@@ -24,6 +59,12 @@ def _setup(context):
     sensor_type = LaunchConfiguration("sensor_type").perform(context)
     controller_mode = LaunchConfiguration("controller_mode").perform(context)
     keypoints_file = LaunchConfiguration("keypoints_file").perform(context)
+    publish_robot_state = _as_bool(
+        LaunchConfiguration("publish_robot_state").perform(context)
+    )
+    lidar_need_extrinsic = _as_bool(
+        LaunchConfiguration("lidar_need_extrinsic").perform(context)
+    )
     navi_mode = int(LaunchConfiguration("navi_mode").perform(context))
     if sensor_type not in ("lidar", "depth"):
         raise RuntimeError("sensor_type must be 'lidar' or 'depth'")
@@ -42,7 +83,7 @@ def _setup(context):
         cloud = "/LIO/clouds_lidar"
         depth = "/camera/aligned_depth_to_color/image_raw"
         cloud_is_world = False
-        need_extrinsic = True
+        need_extrinsic = lidar_need_extrinsic
         intrinsics = {
             "grid_map.cx": 317.19183349609375,
             "grid_map.cy": 256.4806823730469,
@@ -67,13 +108,18 @@ def _setup(context):
         "grid_map.cloud_is_world": cloud_is_world,
         "grid_map.need_extrinsic": need_extrinsic,
     }
+    planner_overrides_file = _write_node_parameter_file(
+        "scan_planner_node", planner_overrides
+    )
     actions = [
         Node(
             package="scan_planner",
             executable="scan_planner_node",
             name="scan_planner_node",
             output="screen",
-            parameters=[planner_yaml] + ([keypoints_file] if keypoints_file else []) + [planner_overrides],
+            parameters=[planner_yaml]
+            + ([keypoints_file] if keypoints_file else [])
+            + [planner_overrides_file],
             remappings=[
                 ("body_pose", body_pose),
                 ("sensor_pose", sensor_pose),
@@ -84,23 +130,27 @@ def _setup(context):
             ],
         )
     ]
-    actions.append(
-        Node(
-            package="robot_state_publisher",
-            executable="robot_state_publisher",
-            name="go2_robot_state_publisher",
-            output="screen",
-            parameters=[
-                common,
-                {
-                    "robot_description": Command(
-                        ["xacro ", os.path.join(go2_share, "xacro", "robot.xacro"),
-                         " use_gazebo:=false"]
-                    )
-                },
-            ],
+    if publish_robot_state:
+        try:
+            import xacro
+        except ImportError as error:
+            raise RuntimeError(
+                "xacro Python module is required for robot_state_publisher; "
+                "install ros-foxy-xacro or launch with publish_robot_state:=false"
+            ) from error
+        robot_description = xacro.process_file(
+            os.path.join(go2_share, "xacro", "robot.xacro"),
+            mappings={"use_gazebo": "false"},
+        ).toxml()
+        actions.append(
+            Node(
+                package="robot_state_publisher",
+                executable="robot_state_publisher",
+                name="go2_robot_state_publisher",
+                output="screen",
+                parameters=[common, {"robot_description": robot_description}],
+            )
         )
-    )
 
     if controller_mode == "open_loop":
         actions.append(
@@ -200,6 +250,16 @@ def generate_launch_description():
             DeclareLaunchArgument("use_gpu", default_value="false"),
             DeclareLaunchArgument("use_pcd_map", default_value="false"),
             DeclareLaunchArgument("pcd_map_file", default_value=""),
+            DeclareLaunchArgument(
+                "publish_robot_state",
+                default_value="true",
+                description="Publish the Go2 URDF; requires the xacro Python module",
+            ),
+            DeclareLaunchArgument(
+                "lidar_need_extrinsic",
+                default_value="false",
+                description="Apply grid_map's built-in LiDAR extrinsic to real lidar poses",
+            ),
             DeclareLaunchArgument("map_size_x", default_value="40.0"),
             DeclareLaunchArgument("map_size_y", default_value="40.0"),
             DeclareLaunchArgument("map_size_z", default_value="5.0"),

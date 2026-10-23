@@ -771,8 +771,8 @@ void GridMap::updateOccupancyCallback()
   md_.use_cloud_update_ = false;
 }
 
-void GridMap::depthPoseCallback(const sensor_msgs::msg::Image::ConstSharedPtr &img,
-                                const nav_msgs::msg::Odometry::ConstSharedPtr &pose)
+void GridMap::depthPoseCallback(sensor_msgs::msg::Image::ConstSharedPtr img,
+                                nav_msgs::msg::Odometry::ConstSharedPtr pose)
 {
   if (mp_.sensor_type_ != "depth")
     return;
@@ -834,7 +834,7 @@ void GridMap::depthPoseCallback(const sensor_msgs::msg::Image::ConstSharedPtr &i
   }
 }
 
-void GridMap::sensorPoseCallback(const nav_msgs::msg::Odometry::ConstSharedPtr &pose_msg)
+void GridMap::sensorPoseCallback(nav_msgs::msg::Odometry::ConstSharedPtr pose_msg)
 {
   if (mp_.sensor_type_ != "lidar")
     return;
@@ -863,13 +863,13 @@ void GridMap::sensorPoseCallback(const nav_msgs::msg::Odometry::ConstSharedPtr &
   updateSlidingMap(md_.ray_pos_);
 }
 
-void GridMap::slidingMapFrameCallback(const nav_msgs::msg::Odometry::ConstSharedPtr &pose)
+void GridMap::slidingMapFrameCallback(nav_msgs::msg::Odometry::ConstSharedPtr pose)
 {
   const geometry_msgs::msg::Point &pos = pose->pose.pose.position;
   md_.sliding_map_frame_pos_ = Eigen::Vector3d(pos.x, pos.y, pos.z);
 }
 
-void GridMap::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &img)
+void GridMap::cloudCallback(sensor_msgs::msg::PointCloud2::ConstSharedPtr img)
 {
   if (mp_.sensor_type_ != "lidar")
     return;

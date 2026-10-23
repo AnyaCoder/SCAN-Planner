@@ -120,7 +120,7 @@ namespace scan_planner
     }
   }
 
-  void SCANReplanFSM::rvizGoalCallback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr &msg)
+  void SCANReplanFSM::rvizGoalCallback(geometry_msgs::msg::PoseStamped::ConstSharedPtr msg)
   {
     if (!msg)
       return;
@@ -137,7 +137,7 @@ namespace scan_planner
     waypointCallback(path);
   }
 
-  void SCANReplanFSM::waypointCallback(const nav_msgs::msg::Path::ConstSharedPtr &msg)
+  void SCANReplanFSM::waypointCallback(nav_msgs::msg::Path::ConstSharedPtr msg)
   {
     if (!msg || msg->poses.empty())
     {
@@ -336,7 +336,7 @@ namespace scan_planner
     return false;
   }
 
-  void SCANReplanFSM::pathCallback(const nav_msgs::msg::Path::ConstSharedPtr &msg)
+  void SCANReplanFSM::pathCallback(nav_msgs::msg::Path::ConstSharedPtr msg)
   {
     if (!msg || msg->poses.empty())
     {
@@ -380,7 +380,7 @@ namespace scan_planner
     }
   }
 
-  void SCANReplanFSM::odometryCallback(const nav_msgs::msg::Odometry::ConstSharedPtr &msg)
+  void SCANReplanFSM::odometryCallback(nav_msgs::msg::Odometry::ConstSharedPtr msg)
   {
     odom_pos_(0) = msg->pose.pose.position.x;
     odom_pos_(1) = msg->pose.pose.position.y;
@@ -413,7 +413,7 @@ namespace scan_planner
     }
   }
 
-  void SCANReplanFSM::go2ExecutionFrozenCallback(const std_msgs::msg::Bool::ConstSharedPtr &msg)
+  void SCANReplanFSM::go2ExecutionFrozenCallback(std_msgs::msg::Bool::ConstSharedPtr msg)
   {
     go2_execution_frozen_ = msg->data;
   }

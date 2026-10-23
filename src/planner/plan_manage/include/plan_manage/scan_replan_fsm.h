@@ -123,11 +123,11 @@ namespace scan_planner
     /* ROS functions */
     void execFSMCallback();
     void checkCollisionCallback();
-    void rvizGoalCallback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr &msg);
-    void waypointCallback(const nav_msgs::msg::Path::ConstSharedPtr &msg);
-    void pathCallback(const nav_msgs::msg::Path::ConstSharedPtr &msg);
-    void odometryCallback(const nav_msgs::msg::Odometry::ConstSharedPtr &msg);
-    void go2ExecutionFrozenCallback(const std_msgs::msg::Bool::ConstSharedPtr &msg);
+    void rvizGoalCallback(geometry_msgs::msg::PoseStamped::ConstSharedPtr msg);
+    void waypointCallback(nav_msgs::msg::Path::ConstSharedPtr msg);
+    void pathCallback(nav_msgs::msg::Path::ConstSharedPtr msg);
+    void odometryCallback(nav_msgs::msg::Odometry::ConstSharedPtr msg);
+    void go2ExecutionFrozenCallback(std_msgs::msg::Bool::ConstSharedPtr msg);
 
     bool checkCollision();
 

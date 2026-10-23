@@ -5,6 +5,7 @@
 /devel/
 /.colcon/
 /compile_commands.json
+/thirdparty/glm/
 
 # ROS runtime state
 /.ros/
