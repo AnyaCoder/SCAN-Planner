@@ -6,6 +6,26 @@
 
 namespace
 {
+uint64_t voxelKey(const Eigen::Vector3i & id)
+{
+  constexpr uint64_t offset = 1ULL << 20;
+  constexpr uint64_t mask = (1ULL << 21) - 1;
+  const uint64_t x = (static_cast<uint64_t>(id.x()) + offset) & mask;
+  const uint64_t y = (static_cast<uint64_t>(id.y()) + offset) & mask;
+  const uint64_t z = (static_cast<uint64_t>(id.z()) + offset) & mask;
+  return (x << 42) | (y << 21) | z;
+}
+
+Eigen::Vector3i voxelIdFromKey(uint64_t key)
+{
+  constexpr int64_t offset = 1LL << 20;
+  constexpr uint64_t mask = (1ULL << 21) - 1;
+  return Eigen::Vector3i(
+      static_cast<int>(((key >> 42) & mask) - offset),
+      static_cast<int>(((key >> 21) & mask) - offset),
+      static_cast<int>((key & mask) - offset));
+}
+
 template <typename T>
 void load_parameter(rclcpp::Node *node, const std::string &name, T &value, const T &default_value)
 {
@@ -35,6 +55,13 @@ void GridMap::initMap(rclcpp::Node *node)
   load_parameter(node_, "grid_map.double_cylinder_offset", mp_.double_cylinder_offset_, 0.0);
   load_parameter(node_, "grid_map.map_sliding_en", mp_.map_sliding_en_, true);
   load_parameter(node_, "grid_map.map_sliding_thresh", mp_.map_sliding_thresh_, mp_.resolution_);
+  load_parameter(node_, "grid_map.obstacle_decay_en", mp_.obstacle_decay_en_, true);
+  load_parameter(node_, "grid_map.obstacle_decay_time", mp_.obstacle_decay_time_, 0.5);
+  load_parameter(node_, "grid_map.obstacle_decay_check_period", mp_.obstacle_decay_check_period_, 0.2);
+  if (mp_.obstacle_decay_time_ <= 0.0)
+    mp_.obstacle_decay_time_ = 0.5;
+  if (mp_.obstacle_decay_check_period_ <= 0.0)
+    mp_.obstacle_decay_check_period_ = 0.2;
 
   load_parameter(node_, "grid_map.fx", mp_.fx_, -1.0);
   load_parameter(node_, "grid_map.fy", mp_.fy_, -1.0);
@@ -125,6 +152,7 @@ void GridMap::initMap(rclcpp::Node *node)
   md_.count_hit_ = vector<short>(buffer_size, 0);
   md_.flag_rayend_ = vector<char>(buffer_size, -1);
   md_.flag_traverse_ = vector<char>(buffer_size, -1);
+  last_hit_time_global_.clear();
 
   md_.raycast_num_ = 0;
 
@@ -164,6 +192,10 @@ void GridMap::initMap(rclcpp::Node *node)
                                         std::bind(&GridMap::updateOccupancyCallback, this));
   vis_timer_ = node_->create_wall_timer(std::chrono::milliseconds(50),
                                         std::bind(&GridMap::visCallback, this));
+  const int decay_period_ms =
+      std::max(50, static_cast<int>(std::round(mp_.obstacle_decay_check_period_ * 1000.0)));
+  decay_timer_ = node_->create_wall_timer(std::chrono::milliseconds(decay_period_ms),
+                                          std::bind(&GridMap::decayOccupancyCallback, this));
 
   map_pub_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("grid_map/occupancy", rclcpp::SensorDataQoS());
   map_inf_pub_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("grid_map/occupancy_inflate", rclcpp::SensorDataQoS());
@@ -186,6 +218,7 @@ void GridMap::initMap(rclcpp::Node *node)
   md_.fuse_time_ = 0.0;
   md_.update_num_ = 0;
   md_.max_fuse_time_ = 0.0;
+  md_.last_raycast_time_ = 0.0;
   md_.local_bound_min_ = mp_.map_bound_min_idx_;
   md_.local_bound_max_ = mp_.map_bound_max_idx_;
 
@@ -234,6 +267,7 @@ void GridMap::resetAllMapData()
   std::fill(md_.count_hit_.begin(), md_.count_hit_.end(), 0);
   std::fill(md_.flag_rayend_.begin(), md_.flag_rayend_.end(), -1);
   std::fill(md_.flag_traverse_.begin(), md_.flag_traverse_.end(), -1);
+  last_hit_time_global_.clear();
   std::queue<Eigen::Vector3i> empty;
   std::swap(md_.cache_voxel_, empty);
 }
@@ -548,6 +582,7 @@ void GridMap::raycastProcess()
   updateSlidingMap(md_.ray_pos_);
 
   md_.raycast_num_ += 1;
+  md_.last_raycast_time_ = node_->now().seconds();
 
   int vox_idx;
   double length;
@@ -667,6 +702,7 @@ void GridMap::raycastProcess()
   boundIndex(max_id);
 
   // std::cout << "cache all: " << md_.cache_voxel_.size() << std::endl;
+  const double hit_time = node_->now().seconds();
 
   while (!md_.cache_voxel_.empty())
   {
@@ -674,6 +710,9 @@ void GridMap::raycastProcess()
     Eigen::Vector3i idx = md_.cache_voxel_.front();
     int idx_ctns = toAddress(idx);
     md_.cache_voxel_.pop();
+
+    if (md_.count_hit_[idx_ctns] > 0)
+      last_hit_time_global_[voxelKey(idx)] = hit_time;
 
     double log_odds_update =
         md_.count_hit_[idx_ctns] >= md_.count_hit_and_miss_[idx_ctns] - md_.count_hit_[idx_ctns] ? mp_.prob_hit_log_ : mp_.prob_miss_log_;
@@ -769,6 +808,41 @@ void GridMap::updateOccupancyCallback()
 
   md_.occ_need_update_ = false;
   md_.use_cloud_update_ = false;
+}
+
+void GridMap::decayOccupancyCallback()
+{
+  if (!mp_.obstacle_decay_en_)
+    return;
+
+  const double now = node_->now().seconds();
+  if (!std::isfinite(now) || now <= 0.0)
+    return;
+  if (md_.last_raycast_time_ <= 0.0 ||
+      now - md_.last_raycast_time_ > 2.0 * mp_.obstacle_decay_time_)
+    return;
+
+  const double cutoff = now - mp_.obstacle_decay_time_;
+  const double prune_cutoff = now - std::max(10.0, 10.0 * mp_.obstacle_decay_time_);
+  for (auto it = last_hit_time_global_.begin(); it != last_hit_time_global_.end();)
+  {
+    const Eigen::Vector3i id_g = voxelIdFromKey(it->first);
+    if (it->second < prune_cutoff || !isInMap(id_g))
+    {
+      it = last_hit_time_global_.erase(it);
+      continue;
+    }
+
+    if (it->second > cutoff)
+    {
+      ++it;
+      continue;
+    }
+
+    if (md_.occupancy_buffer_[toAddress(id_g)] > mp_.min_occupancy_log_)
+      applyOccupancyUpdate(id_g, mp_.clamp_min_log_);
+    it = last_hit_time_global_.erase(it);
+  }
 }
 
 void GridMap::depthPoseCallback(sensor_msgs::msg::Image::ConstSharedPtr img,

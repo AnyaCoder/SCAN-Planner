@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 #include <Eigen/Eigen>
@@ -10,6 +11,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <scan_planner_msgs/msg/bspline.hpp>
 #include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/float32.hpp>
 #if __has_include(<tf2_geometry_msgs/tf2_geometry_msgs.hpp>)
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #else
@@ -38,6 +40,10 @@ public:
     max_vy_ = declare_parameter<double>("max_vy", 0.35);
     max_vyaw_ = std::min(declare_parameter<double>("max_vyaw", 1.0), kMaxVYawLimit);
     finish_dist_ = declare_parameter<double>("finish_dist", 0.15);
+    recovery_speed_ = declare_parameter<double>("recovery_speed", 0.15);
+    recovery_max_distance_ = declare_parameter<double>("recovery_max_distance", 0.6);
+    if (recovery_speed_ <= 0.0 || recovery_max_distance_ <= 0.0)
+      throw std::invalid_argument("recovery speed and distance must be positive");
 
     bspline_sub_ = create_subscription<scan_planner_msgs::msg::Bspline>(
         "planning/bspline", 10,
@@ -45,8 +51,12 @@ public:
     odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
         "body_pose", rclcpp::SensorDataQoS(),
         std::bind(&ClosedLoopController::odomCallback, this, std::placeholders::_1));
+    recovery_sub_ = create_subscription<std_msgs::msg::Float32>(
+        "planning/recovery_backup", 10,
+        std::bind(&ClosedLoopController::recoveryCallback, this, std::placeholders::_1));
     cmd_vel_pub_ = create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 20);
     execution_frozen_pub_ = create_publisher<std_msgs::msg::Bool>("planning/go2_execution_frozen", 10);
+    recovery_done_pub_ = create_publisher<std_msgs::msg::Bool>("planning/recovery_done", 10);
     cmd_timer_ = create_wall_timer(std::chrono::milliseconds(10),
                                    std::bind(&ClosedLoopController::cmdCallback, this));
     last_update_time_ = now();
@@ -93,6 +103,27 @@ private:
     execution_frozen_pub_->publish(msg);
   }
 
+  void publishRecoveryDone()
+  {
+    std_msgs::msg::Bool msg;
+    msg.data = true;
+    recovery_done_pub_->publish(msg);
+  }
+
+  void recoveryCallback(const std_msgs::msg::Float32::ConstSharedPtr msg)
+  {
+    if (!std::isfinite(msg->data) || msg->data <= 0.0)
+      return;
+    const double distance = std::min(static_cast<double>(msg->data), recovery_max_distance_);
+    receive_traj_ = false;
+    recovery_active_ = true;
+    recovery_end_time_ = now() + rclcpp::Duration::from_seconds(distance / recovery_speed_);
+    stop_hold_ticks_ = 0;
+    publishExecutionFrozen(false);
+    RCLCPP_WARN(get_logger(), "Recovery backup: distance=%.3f m speed=%.3f m/s",
+                distance, recovery_speed_);
+  }
+
   void bsplineCallback(const scan_planner_msgs::msg::Bspline::ConstSharedPtr msg)
   {
     if (msg->pos_pts.empty() || msg->knots.empty() || msg->order <= 0)
@@ -114,6 +145,8 @@ private:
     exec_time_ = 0.0;
     last_update_time_ = now();
     receive_traj_ = true;
+    recovery_active_ = false;
+    stop_hold_ticks_ = 0;
     RCLCPP_INFO(get_logger(), "Received trajectory %lld, duration %.3fs",
                 static_cast<long long>(traj_id_), traj_duration_);
   }
@@ -127,10 +160,29 @@ private:
 
   void cmdCallback()
   {
+    if (recovery_active_)
+    {
+      if (now() >= recovery_end_time_)
+      {
+        publishStop();
+        recovery_active_ = false;
+        stop_hold_ticks_ = 2;
+        publishRecoveryDone();
+        return;
+      }
+      geometry_msgs::msg::Twist command;
+      command.linear.x = -recovery_speed_;
+      cmd_vel_pub_->publish(command);
+      return;
+    }
+
     if (!receive_traj_ || !have_odom_)
     {
-      publishExecutionFrozen(false);
-      publishStop();
+      if (stop_hold_ticks_ > 0)
+      {
+        publishStop();
+        --stop_hold_ticks_;
+      }
       return;
     }
     const auto current_time = now();
@@ -164,26 +216,37 @@ private:
     command.linear.y = std::clamp(-s * vel_world.x() + c * vel_world.y(), -max_vy_, max_vy_);
     command.angular.z = yaw_command;
     if (exec_time_ >= traj_duration_ && pos_error.norm() < finish_dist_)
+    {
       command = geometry_msgs::msg::Twist();
+      receive_traj_ = false;
+      stop_hold_ticks_ = 2;
+      publishExecutionFrozen(false);
+    }
     cmd_vel_pub_->publish(command);
   }
 
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr execution_frozen_pub_;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr recovery_done_pub_;
   rclcpp::Subscription<scan_planner_msgs::msg::Bspline>::SharedPtr bspline_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+  rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr recovery_sub_;
   rclcpp::TimerBase::SharedPtr cmd_timer_;
   bool receive_traj_{false};
   bool have_odom_{false};
+  bool recovery_active_{false};
   std::vector<UniformBspline> traj_;
   double traj_duration_{0.0};
   std::int64_t traj_id_{0};
   Eigen::Vector3d odom_pos_{Eigen::Vector3d::Zero()};
   double odom_yaw_{0.0};
   double exec_time_{0.0};
+  int stop_hold_ticks_{0};
+  rclcpp::Time recovery_end_time_{0, 0, RCL_ROS_TIME};
   rclcpp::Time last_update_time_{0, 0, RCL_ROS_TIME};
   double time_forward_, heading_error_threshold_, kp_pos_, kp_yaw_;
   double max_vx_, max_vy_, max_vyaw_, finish_dist_;
+  double recovery_speed_, recovery_max_distance_;
 };
 }  // namespace scan_planner
 

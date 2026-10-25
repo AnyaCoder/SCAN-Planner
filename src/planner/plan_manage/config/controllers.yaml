@@ -9,6 +9,8 @@ closed_loop_controller:
     max_vy: 0.35
     max_vyaw: 1.0
     finish_dist: 0.15
+    recovery_speed: 0.15
+    recovery_max_distance: 0.6
 
 open_loop_controller:
   ros__parameters:

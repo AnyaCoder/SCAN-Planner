@@ -9,6 +9,7 @@
 #include <nav_msgs/msg/path.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/float32.hpp>
 #include <vector>
 #include <visualization_msgs/msg/marker.hpp>
 
@@ -36,7 +37,8 @@ namespace scan_planner
       GEN_NEW_TRAJ,
       REPLAN_TRAJ,
       EXEC_TRAJ,
-      EMERGENCY_STOP
+      EMERGENCY_STOP,
+      RECOVERY_BACKUP
     };
     enum NAVI_MODE
     {
@@ -70,7 +72,19 @@ namespace scan_planner
     FSM_EXEC_STATE exec_state_;
     int continuously_called_times_{0};
     int replan_fail_count_{0};
-    int max_replan_fail_count_{1000};
+    int max_replan_fail_count_{5};
+    double replan_cooldown_sec_{0.2};
+    double next_replan_attempt_sec_{0.0};
+    bool recovery_enable_{true};
+    int recovery_trigger_fail_count_{3};
+    int recovery_max_attempts_{2};
+    int recovery_attempts_{0};
+    double recovery_backup_distance_{0.35};
+    double recovery_min_distance_{0.12};
+    double recovery_speed_{0.15};
+    double recovery_timeout_sec_{5.0};
+    bool recovery_done_{false};
+    rclcpp::Time recovery_deadline_;
     rclcpp::Time last_freeze_update_time_;
 
     Eigen::Vector3d odom_pos_, odom_vel_, odom_acc_; // odometry state
@@ -91,8 +105,10 @@ namespace scan_planner
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
     rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr path_sub_;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr go2_execution_frozen_sub_;
+    rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr recovery_done_sub_;
     rclcpp::Publisher<scan_planner_msgs::msg::Bspline>::SharedPtr bspline_pub_;
     rclcpp::Publisher<scan_planner_msgs::msg::DataDisp>::SharedPtr data_disp_pub_;
+    rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr recovery_backup_pub_;
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr self_inflation_pub_;
 
     /* helper functions */
@@ -113,6 +129,7 @@ namespace scan_planner
     bool adjustGlobalTargetIfOccupied();
     void getLocalTarget();
     void finishProcess();
+    bool tryStartRecoveryBackup();
     void publishSelfInflationMarker();
     double getOdomYaw() const;
     double estimateYawFromSegment(const Eigen::Vector3d &from, const Eigen::Vector3d &to) const;
@@ -126,6 +143,7 @@ namespace scan_planner
     void pathCallback(nav_msgs::msg::Path::ConstSharedPtr msg);
     void odometryCallback(nav_msgs::msg::Odometry::ConstSharedPtr msg);
     void go2ExecutionFrozenCallback(std_msgs::msg::Bool::ConstSharedPtr msg);
+    void recoveryDoneCallback(std_msgs::msg::Bool::ConstSharedPtr msg);
 
     bool checkCollision();
 

@@ -1,5 +1,6 @@
 
 #include <plan_manage/scan_replan_fsm.h>
+#include <array>
 #include <cmath>
 #include <stdexcept>
 
@@ -10,6 +11,14 @@ namespace
   {
     if (!node->has_parameter(name)) node->declare_parameter<T>(name, default_value);
     return node->get_parameter(name).get_value<T>();
+  }
+
+  const char *fsmStateName(int state)
+  {
+    static const std::array<const char *, 7> names = {
+        "INIT", "WAIT_TARGET", "GEN_NEW_TRAJ", "REPLAN_TRAJ",
+        "EXEC_TRAJ", "EMERGENCY_STOP", "RECOVERY_BACKUP"};
+    return state >= 0 && state < static_cast<int>(names.size()) ? names[state] : "UNKNOWN";
   }
 } // namespace
 
@@ -38,7 +47,21 @@ namespace scan_planner
     planning_horizon_ = load_parameter<double>(node_, "fsm.planning_horizon", -1.0);
     emergency_time_ = load_parameter<double>(node_, "fsm.emergency_time", 1.0);
     enable_fail_safe_ = load_parameter<bool>(node_, "fsm.fail_safe", true);
-    max_replan_fail_count_ = load_parameter<int>(node_, "fsm.max_replan_fail_count", 1000);
+    max_replan_fail_count_ = load_parameter<int>(node_, "fsm.max_replan_fail_count", 5);
+    replan_cooldown_sec_ = load_parameter<double>(node_, "fsm.replan_cooldown", 0.2);
+    recovery_enable_ = load_parameter<bool>(node_, "fsm.recovery_backup_enable", true);
+    recovery_trigger_fail_count_ =
+        load_parameter<int>(node_, "fsm.recovery_trigger_fail_count", 3);
+    recovery_max_attempts_ = load_parameter<int>(node_, "fsm.recovery_max_attempts", 2);
+    recovery_backup_distance_ =
+        load_parameter<double>(node_, "fsm.recovery_backup_distance", 0.35);
+    recovery_min_distance_ = load_parameter<double>(node_, "fsm.recovery_min_distance", 0.12);
+    recovery_speed_ = load_parameter<double>(node_, "fsm.recovery_speed", 0.15);
+    recovery_timeout_sec_ = load_parameter<double>(node_, "fsm.recovery_timeout", 5.0);
+    if (recovery_speed_ <= 0.0)
+      recovery_speed_ = 0.15;
+    if (recovery_timeout_sec_ <= 0.0)
+      recovery_timeout_sec_ = 5.0;
     self_inflation_z_up_ = load_parameter<double>(node_, "grid_map.obstacles_inflation_z_up", 0.0);
     self_inflation_z_down_ = load_parameter<double>(node_, "grid_map.obstacles_inflation_z_down", 0.0);
     self_double_cylinder_radius_ = load_parameter<double>(node_, "grid_map.double_cylinder_radius", 0.0);
@@ -76,9 +99,14 @@ namespace scan_planner
     go2_execution_frozen_sub_ = node_->create_subscription<std_msgs::msg::Bool>(
         "planning/go2_execution_frozen", 10,
         std::bind(&SCANReplanFSM::go2ExecutionFrozenCallback, this, std::placeholders::_1));
+    recovery_done_sub_ = node_->create_subscription<std_msgs::msg::Bool>(
+        "planning/recovery_done", 10,
+        std::bind(&SCANReplanFSM::recoveryDoneCallback, this, std::placeholders::_1));
 
     bspline_pub_ = node_->create_publisher<scan_planner_msgs::msg::Bspline>("planning/bspline", 10);
     data_disp_pub_ = node_->create_publisher<scan_planner_msgs::msg::DataDisp>("planning/data_display", 100);
+    recovery_backup_pub_ =
+        node_->create_publisher<std_msgs::msg::Float32>("planning/recovery_backup", 10);
     self_inflation_pub_ = node_->create_publisher<visualization_msgs::msg::Marker>(
         "self_inflation", rclcpp::QoS(1).reliable().transient_local());
 
@@ -107,6 +135,10 @@ namespace scan_planner
     active_waypoints_ = wps;
     current_wp_ = 0;
     trigger_ = true;
+    replan_fail_count_ = 0;
+    recovery_attempts_ = 0;
+    recovery_done_ = false;
+    next_replan_attempt_sec_ = 0.0;
     init_pt_ = odom_pos_;
 
     if (planNextWaypoint())
@@ -149,6 +181,10 @@ namespace scan_planner
 
     cout << "Triggered!" << endl;
     trigger_ = true;
+    replan_fail_count_ = 0;
+    recovery_attempts_ = 0;
+    recovery_done_ = false;
+    next_replan_attempt_sec_ = 0.0;
     init_pt_ = odom_pos_;
 
     bool success = false;
@@ -344,6 +380,10 @@ namespace scan_planner
     }
 
     trigger_ = true;
+    replan_fail_count_ = 0;
+    recovery_attempts_ = 0;
+    recovery_done_ = false;
+    next_replan_attempt_sec_ = 0.0;
 
     std::vector<Eigen::Vector3d> waypoints;
     waypoints.reserve(msg->poses.size());
@@ -407,6 +447,12 @@ namespace scan_planner
   void SCANReplanFSM::go2ExecutionFrozenCallback(std_msgs::msg::Bool::ConstSharedPtr msg)
   {
     go2_execution_frozen_ = msg->data;
+  }
+
+  void SCANReplanFSM::recoveryDoneCallback(std_msgs::msg::Bool::ConstSharedPtr msg)
+  {
+    if (msg && msg->data)
+      recovery_done_ = true;
   }
 
   void SCANReplanFSM::updateLocalTrajTimeFreeze()
@@ -490,10 +536,11 @@ namespace scan_planner
     else
       continuously_called_times_ = 1;
 
-    static string state_str[7] = {"INIT", "WAIT_TARGET", "GEN_NEW_TRAJ", "REPLAN_TRAJ", "EXEC_TRAJ", "EMERGENCY_STOP"};
     int pre_s = int(exec_state_);
     exec_state_ = new_state;
-    cout << "[" + pos_call + "]: from " + state_str[pre_s] + " to " + state_str[int(new_state)] << endl;
+    cout << "[" + pos_call + "]: from " + fsmStateName(pre_s) + " to " +
+                fsmStateName(int(new_state))
+         << endl;
   }
 
   std::pair<int, SCANReplanFSM::FSM_EXEC_STATE> SCANReplanFSM::timesOfConsecutiveStateCalls()
@@ -503,9 +550,7 @@ namespace scan_planner
 
   void SCANReplanFSM::printFSMExecState()
   {
-    static string state_str[7] = {"INIT", "WAIT_TARGET", "GEN_NEW_TRAJ", "REPLAN_TRAJ", "EXEC_TRAJ", "EMERGENCY_STOP"};
-
-    cout << "[FSM]: state: " + state_str[int(exec_state_)] << endl;
+    cout << "[FSM]: state: " + string(fsmStateName(int(exec_state_))) << endl;
   }
 
   void SCANReplanFSM::execFSMCallback()
@@ -553,6 +598,8 @@ namespace scan_planner
 
     case GEN_NEW_TRAJ:
     {
+      if (node_->now().seconds() < next_replan_attempt_sec_)
+        break;
       setStartStateFromOdomOrCurrentTraj();
 
       // Eigen::Vector3d rot_x = odom_orient_.toRotationMatrix().block(0, 0, 3, 1);
@@ -570,12 +617,15 @@ namespace scan_planner
       {
 
         replan_fail_count_ = 0;
+        recovery_attempts_ = 0;
+        next_replan_attempt_sec_ = 0.0;
         changeFSMExecState(EXEC_TRAJ, "FSM");
         flag_escape_emergency_ = true;
       }
       else
       {
         replan_fail_count_++;
+        next_replan_attempt_sec_ = node_->now().seconds() + replan_cooldown_sec_;
         changeFSMExecState(GEN_NEW_TRAJ, "FSM");
       }
       break;
@@ -583,15 +633,20 @@ namespace scan_planner
 
     case REPLAN_TRAJ:
     {
+      if (node_->now().seconds() < next_replan_attempt_sec_)
+        break;
 
       if (planFromCurrentTraj())
       {
         replan_fail_count_ = 0;
+        recovery_attempts_ = 0;
+        next_replan_attempt_sec_ = 0.0;
         changeFSMExecState(EXEC_TRAJ, "FSM");
       }
       else
       {
         replan_fail_count_++;
+        next_replan_attempt_sec_ = node_->now().seconds() + replan_cooldown_sec_;
         changeFSMExecState(REPLAN_TRAJ, "FSM");
       }
 
@@ -692,6 +747,34 @@ namespace scan_planner
       flag_escape_emergency_ = false;
       break;
     }
+
+    case RECOVERY_BACKUP:
+    {
+      if (!recovery_done_ && node_->now() < recovery_deadline_)
+        break;
+
+      if (!recovery_done_)
+      {
+        RCLCPP_ERROR(node_->get_logger(), "Recovery backup timed out");
+        need_hover_stop_ = true;
+        flag_escape_emergency_ = true;
+        changeFSMExecState(EMERGENCY_STOP, "RECOVERY");
+        break;
+      }
+
+      recovery_done_ = false;
+      RCLCPP_INFO(node_->get_logger(), "Recovery backup finished; retrying planning");
+      if (have_target_)
+      {
+        trigger_ = true;
+        changeFSMExecState(GEN_NEW_TRAJ, "RECOVERY");
+      }
+      else
+      {
+        changeFSMExecState(WAIT_TARGET, "RECOVERY");
+      }
+      break;
+    }
     }
 
     finishProcess();
@@ -702,6 +785,16 @@ namespace scan_planner
 
   void SCANReplanFSM::finishProcess()
   {
+    if (exec_state_ == RECOVERY_BACKUP)
+      return;
+
+    if (recovery_enable_ && replan_fail_count_ >= recovery_trigger_fail_count_ &&
+        tryStartRecoveryBackup())
+    {
+      replan_fail_count_ = 0;
+      return;
+    }
+
     if (replan_fail_count_ >= max_replan_fail_count_)
     {
       RCLCPP_WARN(node_->get_logger(),
@@ -711,6 +804,63 @@ namespace scan_planner
       flag_escape_emergency_ = true;
       changeFSMExecState(EMERGENCY_STOP, "finishProcess");
     }
+  }
+
+  bool SCANReplanFSM::tryStartRecoveryBackup()
+  {
+    if (!recovery_enable_ || recovery_attempts_ >= recovery_max_attempts_)
+      return false;
+    if (!have_odom_ || !planner_manager_ || !planner_manager_->grid_map_)
+      return false;
+
+    const double yaw = getOdomYaw();
+    const Eigen::Vector3d backward(-std::cos(yaw), -std::sin(yaw), 0.0);
+    constexpr double sample_step = 0.05;
+    double chosen_distance = 0.0;
+
+    for (double distance = recovery_backup_distance_;
+         distance + 1e-9 >= recovery_min_distance_; distance -= sample_step)
+    {
+      bool clear = true;
+      const int samples = std::max(1, static_cast<int>(std::ceil(distance / sample_step)));
+      for (int i = 1; i <= samples; ++i)
+      {
+        const Eigen::Vector3d point =
+            odom_pos_ + backward * (distance * static_cast<double>(i) / samples);
+        if (planner_manager_->grid_map_->getInflateOccupancy(point, yaw) != 0)
+        {
+          clear = false;
+          break;
+        }
+      }
+      if (clear)
+      {
+        chosen_distance = distance;
+        break;
+      }
+    }
+
+    if (chosen_distance < recovery_min_distance_)
+    {
+      RCLCPP_WARN(node_->get_logger(),
+                  "No safe space behind for recovery backup; keeping emergency stop");
+      return false;
+    }
+
+    recovery_attempts_++;
+    recovery_done_ = false;
+    recovery_deadline_ =
+        node_->now() +
+        rclcpp::Duration::from_seconds(chosen_distance / recovery_speed_ + recovery_timeout_sec_);
+
+    std_msgs::msg::Float32 command;
+    command.data = static_cast<float>(chosen_distance);
+    recovery_backup_pub_->publish(command);
+    RCLCPP_WARN(node_->get_logger(),
+                "Planning stuck; backing up %.2f m at %.2f m/s (attempt %d/%d)",
+                chosen_distance, recovery_speed_, recovery_attempts_, recovery_max_attempts_);
+    changeFSMExecState(RECOVERY_BACKUP, "RECOVERY");
+    return true;
   }
 
   bool SCANReplanFSM::planFromCurrentTraj()
@@ -793,7 +943,8 @@ namespace scan_planner
     LocalTrajData *info = &planner_manager_->local_data_;
     auto map = planner_manager_->grid_map_;
 
-    if (exec_state_ == WAIT_TARGET || info->start_time_.seconds() < 1e-5)
+    if (exec_state_ == WAIT_TARGET || exec_state_ == RECOVERY_BACKUP ||
+        info->start_time_.seconds() < 1e-5)
       return;
 
     /* ---------- check trajectory ---------- */

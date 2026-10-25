@@ -14,6 +14,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rmw/qos_profiles.h>
 #include <tuple>
+#include <unordered_map>
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/image_encodings.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
@@ -64,6 +65,9 @@ struct MappingParameters {
   bool map_sliding_en_;
   double map_sliding_thresh_;
   int map_sliding_thresh_vox_;
+  bool obstacle_decay_en_;
+  double obstacle_decay_time_;
+  double obstacle_decay_check_period_;
   string frame_id_, sliding_map_frame_id_;
 
   /* depth camera intrinsics */
@@ -143,6 +147,7 @@ struct MappingData {
 
   double fuse_time_, max_fuse_time_;
   int update_num_;
+  double last_raycast_time_;
 
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
@@ -212,6 +217,7 @@ private:
 
   // update occupancy by raycasting
   void updateOccupancyCallback();
+  void decayOccupancyCallback();
   void visCallback();
 
   // main update process
@@ -263,7 +269,8 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr unknown_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr depth_cloud_pub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr extrinsic_pose_pub_;
-  rclcpp::TimerBase::SharedPtr occ_timer_, vis_timer_;
+  rclcpp::TimerBase::SharedPtr occ_timer_, vis_timer_, decay_timer_;
+  std::unordered_map<uint64_t, double> last_hit_time_global_;
 
   //
   uniform_real_distribution<double> rand_noise_;
