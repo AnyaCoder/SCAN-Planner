@@ -71,7 +71,7 @@ source install/setup.bash
 ros2 launch scan_planner run.launch.py \
   is_real_world:=false navi_mode:=1 sensor_type:=lidar \
   controller_mode:=closed_loop use_gpu:=false \
-  use_pcd_map:=true pcd_map_file:=/home/xiaoqi_wen/Desktop/scan/SCAN-Planner/map.pcd
+  use_pcd_map:=true pcd_map_file:=$HOME/SCAN-Planner/foxy_ws/map.pcd
 ```
 
 
@@ -127,10 +127,13 @@ scan_planner_node:
 
 自定义消息类型为 `scan_planner_msgs/msg/Bspline` 和 `scan_planner_msgs/msg/DataDisp`。规划器相关话题均为相对话题，支持重映射，核心输出话题包括 `planning/bspline`、`planning/data_display` 和 `planning/go2_execution_frozen`。
 
-关键点记录器现在是原生的 `rclpy` 可执行程序：
+点击式路径点记录器使用 RViz 的 `Publish Point` 工具，并把路径点保存为
+`navi_mode=2` 可直接读取的参数文件：
 
 ```bash
-ros2 run scan_planner keypoint_recorder.py --output keypoints.yaml
+ros2 run scan_planner clicked_waypoint_recorder.py \
+  --output ~/SCAN-Planner/foxy_ws/maps/clicked_waypoints.yaml \
+  --z 0.4
 ```
 
 ## Gazebo Fortress / Go2 仿真

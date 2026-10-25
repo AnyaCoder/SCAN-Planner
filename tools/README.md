@@ -1,14 +1,18 @@
-# Keypoint recorder (ROS 2)
+# Relocalization replay
 
-Build and source the workspace, then run:
+`relocalization_replay.sh` runs the validated
+FAST-LIO -> `map_relocalizer` -> SCAN chain:
 
 ```bash
-ros2 run scan_planner keypoint_recorder.py --odom /LIO/odom_vehicle --output keypoints.yaml
+./tools/relocalization_replay.sh start
+./tools/relocalization_replay.sh replay
+./tools/relocalization_replay.sh stop
+./tools/relocalization_replay.sh status
 ```
 
-The generated file is a ROS 2 parameter file containing the flat
-`fsm.waypoints: [x0, y0, z0, ...]` array. Pass it to `run.launch.py` with
-`keypoints_file:=/absolute/path/to/keypoints.yaml` when `navi_mode:=2`.
+`start` accepts a bundle directory or `map_world.pcd`. It waits for
+`2D Pose Estimate` and ICP convergence before starting SCAN. `replay` only
+restarts SCAN when relocalization is already converged.
 
 # FAST-LIO2 (ROS 2 Foxy)
 
@@ -73,6 +77,90 @@ use global `--compress` only on a severely bandwidth-limited link.
 is still running. It validates `/tf`, `/LIO/clouds_lidar`, and `world -> body`,
 and restarts only the local TCP client if the visualization data stream is
 stale. It never stops Go2 algorithms or the speed bridge.
+
+# Click waypoint editor
+
+`start_scan_stack.sh` starts `clicked_waypoint_recorder.py` automatically in
+`navi_mode=1` in a separate terminal. It records RViz `Publish Point` clicks as
+numbered waypoints and writes `foxy_ws/maps/clicked_waypoints.yaml` by default.
+Nothing is saved until you press `s` or `q` in that terminal. Its log is
+`/tmp/scan_planner_local_logs/clicked_waypoints.log`.
+The automatic recorder publishes every click to `/move_base_simple/goal`, so
+the dog drives to that point as it is recorded. Set
+`SCAN_CLICKED_WAYPOINTS_DRIVE=0` to record without moving.
+
+To run the recorder manually instead:
+
+```bash
+ros2 run scan_planner clicked_waypoint_recorder.py \
+  --output ~/SCAN-Planner/foxy_ws/maps/clicked_waypoints.yaml \
+  --z 0.4
+```
+
+In the normal `default_real.rviz` view use `Publish Point` with fixed frame
+`world`. The `Clicked Waypoints` MarkerArray layer shows the ordered points and
+numbers.
+Terminal controls:
+
+- `u`: undo the last point
+- `c`: clear all
+- `s`: save
+- `l`: list
+- `q`: save and quit
+
+To make the dog drive to each clicked point while recording, add `--drive`.
+This publishes each point to `/move_base_simple/goal`, so it only works with
+SCAN `navi_mode=1` and the speed bridge enabled:
+
+```bash
+ros2 run scan_planner clicked_waypoint_recorder.py \
+  --drive \
+  --output ~/SCAN-Planner/foxy_ws/maps/clicked_waypoints.yaml \
+  --z 0.4
+```
+
+Without `--drive`, clicks are recording-only. With `--drive`, undo removes the
+saved point but does not cancel a goal the dog is already executing.
+
+The output is directly usable by `navi_mode=2`:
+
+```yaml
+scan_planner_node:
+  ros__parameters:
+    fsm.navi_mode: 2
+    fsm.waypoints: [x0, y0, z0, x1, y1, z1]
+```
+
+Copy the YAML to Go2 and start waypoint navigation with:
+
+```bash
+SCAN_NAVI_MODE=2 \
+SCAN_KEYPOINTS_FILE=/home/unitree/SCAN-Planner/maps/clicked_waypoints.yaml \
+./tools/start_scan_stack.sh --restart
+```
+
+If the saved PCD is in another frame, set it to `world` or transform it first;
+the recorder ignores clicks whose frame is not `world` or `map`.
+
+# Dense PCD save
+
+`fast_lio_dense_map_save.patch` appends every registered LiDAR frame to a dense
+save buffer, then voxel-downsamples once at save time. The path and leaf size
+are configured in `mid360_fastlio.yaml`:
+
+```yaml
+map_file_path: "/home/unitree/SCAN-Planner/maps/go2_scan.pcd"
+pcd_save:
+  pcd_save_en: true
+  voxel_size: 0.05
+```
+
+To save the dense map together with the path points while the stack is still
+running, use `save_relocalization_bundle.sh` as described above.
+
+`stop_scan_stack.sh` saves the raw dense map automatically before stopping
+FAST-LIO2.
+Longer scans use more RAM until the final voxel filter runs.
 
 Reference DDS configurations:
 

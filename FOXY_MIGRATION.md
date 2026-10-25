@@ -6,7 +6,7 @@ backported to Ubuntu 20.04 / ROS 2 Foxy for the Go2 onboard computer.
 ## Verified
 
 - Ubuntu 20.04, ROS 2 Foxy, GCC 9.4
-- Full workspace build: 13 packages finished
+- Full workspace build passes
 - Headless SCAN-Planner simulation starts all required nodes
 - A goal published on `/move_base_simple/goal` produces `/planning/bspline`
   and drives the kinematic simulator through `/quad_0/cmd_vel`
