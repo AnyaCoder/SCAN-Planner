@@ -14,6 +14,12 @@ REMOTE_LOG_DIR=${SCAN_REMOTE_LOG_DIR:-/tmp/scan_planner_logs}
 LOCAL_LOG_DIR=${SCAN_LOCAL_LOG_DIR:-/tmp/scan_planner_local_logs}
 LOCAL_WS=${SCAN_LOCAL_WS:-$HOME/SCAN-Planner/foxy_ws}
 ROS_DOMAIN_ID=${SCAN_ROS_DOMAIN_ID:-0}
+NAVI_MODE=${SCAN_NAVI_MODE:-1}
+KEYPOINTS_FILE=${SCAN_KEYPOINTS_FILE:-}
+CLICKED_WAYPOINTS_ENABLE=${SCAN_CLICKED_WAYPOINTS_ENABLE:-auto}
+CLICKED_WAYPOINTS_FILE=${SCAN_CLICKED_WAYPOINTS_FILE:-$LOCAL_WS/maps/clicked_waypoints.yaml}
+CLICKED_WAYPOINTS_Z=${SCAN_CLICKED_WAYPOINTS_Z:-0.4}
+CLICKED_WAYPOINTS_DRIVE=${SCAN_CLICKED_WAYPOINTS_DRIVE:-1}
 GO2_WIFI_HOST=${GO2_WIFI_HOST:-192.168.76.1}
 LOCAL_DDS_CONFIG=${SCAN_LOCAL_DDS_CONFIG:-$HOME/.config/ros2/cyclonedds.xml}
 REMOTE_DDS_CONFIG=${SCAN_REMOTE_DDS_CONFIG:-$REMOTE_HOME/.config/ros2/cyclonedds.xml}
@@ -84,6 +90,19 @@ start_local() {
   setsid -f bash -c "cd $(printf '%q' "$LOCAL_WS") && exec $command" \
     >"$log" 2>&1 </dev/null
   printf 'started %s\nlog %s\n' "$name" "$log"
+}
+
+open_local_terminal() {
+  local title=$1
+  local body=$2
+  if command -v gnome-terminal >/dev/null 2>&1; then
+    gnome-terminal --title="$title" --working-directory="$LOCAL_WS" -- \
+      bash -c "$body"
+  elif command -v x-terminal-emulator >/dev/null 2>&1; then
+    (cd "$LOCAL_WS" && x-terminal-emulator -e bash -c "$body")
+  else
+    die "找不到终端模拟器，无法打开 Publish Point 记录器终端"
+  fi
 }
 
 wait_for_remote_topic() {
@@ -190,7 +209,18 @@ EOF
 }
 
 local_rviz_running() {
-  pgrep -f 'rviz2 .*default.*\.rviz|ros2 launch scan_planner rviz\.launch\.py|scan_wifi_bridge\.py --client' >/dev/null 2>&1
+  pgrep -f 'rviz2 .*default.*\.rviz|ros2 launch scan_planner rviz\.launch\.py|scan_wifi_bridge\.py --client|clicked_waypoint_recorder\.py' >/dev/null 2>&1
+}
+
+clicked_waypoints_enabled() {
+  case "$CLICKED_WAYPOINTS_ENABLE" in
+    1|true|on) return 0 ;;
+    0|false|off) return 1 ;;
+    auto) [[ "$NAVI_MODE" == "1" ]] ;;
+    *)
+      die "SCAN_CLICKED_WAYPOINTS_ENABLE 只能是 auto/1/0: $CLICKED_WAYPOINTS_ENABLE"
+      ;;
+  esac
 }
 
 check_dds_config() {
@@ -210,6 +240,7 @@ check_dds_config() {
     die "工作站 DDS 不得绑定 Wi-Fi，只应绑定 lo: $local_cfg"
   fi
 
+  # shellcheck disable=SC2029
   if ! ssh "$GO2_HOST" \
     "test -f '$REMOTE_DDS_CONFIG' && \
      grep -Fq -- 'name=\"eth0\"' '$REMOTE_DDS_CONFIG' && \
@@ -246,6 +277,10 @@ check_local_workspace() {
   local prefix="$LOCAL_WS/install/scan_planner"
   [[ -f "$prefix/share/scan_planner/rviz/default_real.rviz" ]] || \
     die "缺少 default_real.rviz，请先执行 tools 中记录的 colcon build"
+  if clicked_waypoints_enabled; then
+    [[ -x "$prefix/lib/scan_planner/clicked_waypoint_recorder.py" ]] || \
+      die "缺少 clicked_waypoint_recorder.py，请先编译 scan_planner"
+  fi
   [[ -x /opt/ros/foxy/bin/rviz2 ]] || die "找不到 rviz2"
 }
 
@@ -260,7 +295,14 @@ for arg in "$@"; do
 在工作站运行。Go2 的 ROS/DDS 只走 eth0，工作站的 ROS/DDS 只走 lo；
 跨机可视化状态和 RViz 目标只通过 Wi-Fi 上的 TCP 9000 桥传输。
 默认拒绝覆盖已运行的服务；使用 --restart 会先清理两端服务和旧 Wi-Fi relay。
+navi_mode=1 时默认在独立终端打开 Publish Point 路径点记录器，按 s/q 手动保存。
 本脚本不发送 1003 StopMove；停车使用遥控器或 StopMove。
+
+环境变量:
+  SCAN_CLICKED_WAYPOINTS_ENABLE=auto   auto/1/0，默认仅 navi_mode=1 启用
+  SCAN_CLICKED_WAYPOINTS_FILE=...      默认 foxy_ws/maps/clicked_waypoints.yaml
+  SCAN_CLICKED_WAYPOINTS_Z=0.4         点击点未到达前使用的固定高度
+  SCAN_CLICKED_WAYPOINTS_DRIVE=1       默认点选后发布导航目标；0 表示只记录
 EOF
       exit 0
       ;;
@@ -287,42 +329,47 @@ CLEANUP_ON_FAILURE=1
 ros2 daemon stop >/dev/null 2>&1 || true
 scp -q "$SCRIPT_DIR/scan_wifi_bridge.py" "$GO2_HOST:$REMOTE_ROOT/tools/scan_wifi_bridge.py" || \
   die "无法同步 TCP 桥到 Go2"
+# shellcheck disable=SC2029
 ssh "$GO2_HOST" "chmod +x '$REMOTE_ROOT/tools/scan_wifi_bridge.py'"
 
-printf '\n[1/7] 启动 Mid-360 驱动\n'
+printf '\n[1/8] 启动 Mid-360 驱动\n'
 start_remote livox "$REMOTE_GRAPH_WS" "ros2 launch livox_ros_driver2 msg_MID360_launch.py"
 wait_for_remote_topic /livox/lidar 20 || { show_remote_log "$REMOTE_LOG_DIR/livox.log"; die "Mid-360 未发布 /livox/lidar"; }
 wait_for_remote_topic /livox/imu 20 || { show_remote_log "$REMOTE_LOG_DIR/livox.log"; die "Mid-360 未发布 /livox/imu"; }
 
-printf '[2/7] 启动 FAST-LIO2\n'
+printf '[2/8] 启动 FAST-LIO2\n'
 start_remote fastlio "$REMOTE_ROOT" \
   "ros2 launch fast_lio mapping.launch.py rviz:=false config_path:=$REMOTE_ROOT/src/planner/lio_bridge/config config_file:=mid360_fastlio.yaml tf_topic:=/fastlio/tf"
 wait_for_remote_topic /Odometry 40 || { show_remote_log "$REMOTE_LOG_DIR/fastlio.log"; die "FAST-LIO2 未发布 /Odometry"; }
 wait_for_remote_log "$REMOTE_LOG_DIR/fastlio.log" "Initialize the map kdtree" 25 || \
   { show_remote_log "$REMOTE_LOG_DIR/fastlio.log"; die "FAST-LIO2 地图初始化未完成"; }
 
-printf '[3/7] 启动 lio_bridge\n'
+printf '[3/8] 启动 lio_bridge\n'
 start_remote bridge "$REMOTE_ROOT" "ros2 launch lio_bridge fastlio_bridge.launch.py"
 wait_for_remote_topic /LIO/odom_vehicle 25 || { show_remote_log "$REMOTE_LOG_DIR/bridge.log"; die "bridge 未发布 /LIO/odom_vehicle"; }
 wait_for_remote_topic /LIO/clouds_lidar 25 || { show_remote_log "$REMOTE_LOG_DIR/bridge.log"; die "bridge 未发布 /LIO/clouds_lidar"; }
 wait_for_remote_log "$REMOTE_LOG_DIR/bridge.log" "rx/s odom=" 25 || \
   { show_remote_log "$REMOTE_LOG_DIR/bridge.log"; die "bridge 未收到 LIO 数据"; }
 
-printf '[4/7] 启动 SCAN-Planner\n'
+printf '[4/8] 启动 SCAN-Planner\n'
+SCAN_KEYPOINTS_ARG=""
+if [[ -n "$KEYPOINTS_FILE" ]]; then
+  SCAN_KEYPOINTS_ARG="keypoints_file:=$KEYPOINTS_FILE"
+fi
 start_remote scan "$REMOTE_ROOT" \
-  "ros2 launch scan_planner run.launch.py is_real_world:=true navi_mode:=1 sensor_type:=lidar controller_mode:=closed_loop"
+  "ros2 launch scan_planner run.launch.py is_real_world:=true navi_mode:=$NAVI_MODE $SCAN_KEYPOINTS_ARG sensor_type:=lidar controller_mode:=closed_loop"
 wait_for_remote_node /scan_planner_node 35 || { show_remote_log "$REMOTE_LOG_DIR/scan.log"; die "SCAN-Planner 节点未启动"; }
 wait_for_remote_topic /grid_map/occupancy 35 || { show_remote_log "$REMOTE_LOG_DIR/scan.log"; die "SCAN-Planner 未发布栅格地图"; }
 wait_for_remote_log "$REMOTE_LOG_DIR/scan.log" "wait for goal" 25 || \
   { show_remote_log "$REMOTE_LOG_DIR/scan.log"; die "SCAN-Planner 未进入等待目标状态"; }
 
-printf '[5/7] 启动 /cmd_vel -> Unitree Sport 直通桥\n'
+printf '[5/8] 启动 /cmd_vel -> Unitree Sport 直通桥\n'
 start_remote cmd_vel_sport "$REMOTE_ROOT" \
   "ros2 launch cmd_vel_sport_bridge cmd_vel_sport_bridge.launch.py"
 wait_for_remote_node /cmd_vel_sport_bridge 25 || \
   { show_remote_log "$REMOTE_LOG_DIR/cmd_vel_sport.log"; die "cmd_vel_sport_bridge 未启动"; }
 
-printf '[6/7] 启动 Wi-Fi TCP 状态桥\n'
+printf '[6/8] 启动 Wi-Fi TCP 状态桥\n'
 start_remote wifi_bridge "$REMOTE_ROOT" \
   "python3 $REMOTE_ROOT/tools/scan_wifi_bridge.py --server --bind 0.0.0.0 --port 9000"
 wait_for_remote_log "$REMOTE_LOG_DIR/wifi_bridge.log" "listening on" 25 || \
@@ -335,10 +382,47 @@ wait_for_local_topic /tf 25 || die "本地 TCP 桥未发布 /tf"
 wait_for_local_topic /LIO/clouds_lidar 30 || die "本地 TCP 桥未转发 /LIO/clouds_lidar"
 wait_for_local_topic /grid_map/occupancy 30 || die "本地 TCP 桥未转发 /grid_map/occupancy"
 
-printf '\n[7/7] 打开工作站 RViz\n'
+printf '\n[7/8] 打开 Publish Point 路径点记录器终端\n'
+if clicked_waypoints_enabled; then
+  recorder_args=(
+    ros2 run scan_planner clicked_waypoint_recorder.py
+    --output "$CLICKED_WAYPOINTS_FILE"
+    --z "$CLICKED_WAYPOINTS_Z"
+  )
+  if [[ "$CLICKED_WAYPOINTS_DRIVE" == "1" ]]; then
+    recorder_args+=(--drive)
+  fi
+  printf -v recorder_command '%q ' "${recorder_args[@]}"
+  mkdir -p "$(dirname "$CLICKED_WAYPOINTS_FILE")"
+  recorder_log="$LOCAL_LOG_DIR/clicked_waypoints.log"
+  terminal_body=$(cat <<EOF
+set -o pipefail
+${recorder_command% } 2>&1 | tee $(printf '%q' "$recorder_log")
+status=\${PIPESTATUS[0]}
+printf '\n记录器已退出 (code %s)。按回车关闭窗口...\n' "\$status"
+read -r _
+exit "\$status"
+EOF
+)
+  open_local_terminal "SCAN Publish Point Recorder" "$terminal_body"
+  wait_for_local_log "$recorder_log" \
+    "Click waypoints on /clicked_point" 15 || {
+    tail -n 80 "$recorder_log" >&2 2>/dev/null || true
+    die "Publish Point 路径点记录器未启动"
+  }
+  printf '路径点输出: %s（在记录器终端按 s 或 q 保存）\n' "$CLICKED_WAYPOINTS_FILE"
+else
+  printf '已跳过（SCAN_CLICKED_WAYPOINTS_ENABLE=%s, navi_mode=%s）\n' \
+    "$CLICKED_WAYPOINTS_ENABLE" "$NAVI_MODE"
+fi
+
+printf '\n[8/8] 打开工作站 RViz\n'
 printf '启动完成。远端日志:\n'
 printf '  ssh %s tail -f %s/{livox,fastlio,bridge,scan,cmd_vel_sport}.log\n' "$GO2_HOST" "$REMOTE_LOG_DIR"
 printf '本地 TCP 桥日志: %s/wifi_bridge.log\n' "$LOCAL_LOG_DIR"
+if clicked_waypoints_enabled; then
+  printf '路径点记录器日志: %s/clicked_waypoints.log\n' "$LOCAL_LOG_DIR"
+fi
 printf '关闭 RViz 不会停止 Go2 服务；停止全部服务: %s\n\n' "$STOP_SCRIPT"
 printf '仅重开 RViz: %s\n\n' "$SCRIPT_DIR/restart_rviz.sh"
 

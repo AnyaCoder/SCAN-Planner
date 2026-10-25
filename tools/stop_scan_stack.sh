@@ -40,8 +40,31 @@ done
 REMOTE
 )
 
+  # shellcheck disable=SC2029
   ssh "$GO2_HOST" "NAME=$(printf '%q' "$name") PATTERN=$(printf '%q' "$pattern") bash -s" \
     <<<"$script"
+}
+
+remote_save_map() {
+  local script
+  script=$(cat <<'REMOTE'
+set +u
+source /opt/ros/foxy/setup.bash
+source /unitree/module/graph_pid_ws/install/local_setup.bash 2>/dev/null || true
+source /home/unitree/fastlio_ws/install/local_setup.bash 2>/dev/null || true
+source /home/unitree/SCAN-Planner/install/local_setup.bash 2>/dev/null || true
+set -u
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export CYCLONEDDS_URI=file:///home/unitree/.config/ros2/cyclonedds.xml
+export LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH:-}
+if ! pgrep -f 'fastlio_mapping|fast_lio mapping\.launch\.py' >/dev/null 2>&1; then
+  exit 0
+fi
+mkdir -p /home/unitree/SCAN-Planner/maps
+timeout 60 ros2 service call /map_save std_srvs/srv/Trigger {}
+REMOTE
+)
+  ssh "$GO2_HOST" bash -s <<<"$script"
 }
 
 stop_local_pgids() {
@@ -81,6 +104,9 @@ stop_local_pgids() {
 printf '停止工作站 RViz...\n'
 stop_local_pgids "RViz" 'rviz2 .*default.*\.rviz|ros2 launch scan_planner rviz\.launch\.py'
 
+printf '停止工作站 Publish Point 记录器...\n'
+stop_local_pgids "Publish Point recorder" 'clicked_waypoint_recorder\.py'
+
 printf '停止工作站 TCP 状态桥...\n'
 stop_local_pgids "Wi-Fi TCP client" 'scan_wifi_bridge\.py --client'
 
@@ -101,6 +127,8 @@ remote_stop_group "SCAN-Planner" \
   'scan_planner_node|closed_loop_controller|open_loop_controller|go2_robot_state_publisher|cmd_vel_sport_bridge|scan_planner run\.launch\.py|cmd_vel_sport_bridge\.launch\.py'
 remote_stop_group "lio_bridge" \
   'lio_bridge_node|lio_bridge fastlio_bridge\.launch\.py'
+printf '保存 FAST-LIO2 全局点云...\n'
+remote_save_map || printf '  警告: /map_save 调用失败\n' >&2
 remote_stop_group "FAST-LIO2" \
   'fastlio_mapping|fast_lio mapping\.launch\.py'
 remote_stop_group "Livox driver" \
