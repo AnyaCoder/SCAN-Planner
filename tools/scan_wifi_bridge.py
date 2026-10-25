@@ -22,10 +22,10 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.serialization import deserialize_message, serialize_message
 
-from geometry_msgs.msg import PointStamped, PoseStamped
+from geometry_msgs.msg import PointStamped, PoseStamped, PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry, Path
 from sensor_msgs.msg import JointState, PointCloud2
-from std_msgs.msg import String
+from std_msgs.msg import Float32, String
 from tf2_msgs.msg import TFMessage
 from visualization_msgs.msg import Marker
 
@@ -61,6 +61,9 @@ UPLINK = [
     Topic("/LIO/odom_vehicle", "nav_msgs/msg/Odometry", Odometry, "sensor"),
     Topic("/LIO/odom_imu", "nav_msgs/msg/Odometry", Odometry, "sensor"),
     Topic("/LIO/clouds_lidar", "sensor_msgs/msg/PointCloud2", PointCloud2, "cloud", 0.20),
+    Topic("/relocalization/map", "sensor_msgs/msg/PointCloud2", PointCloud2, "latched"),
+    Topic("/relocalization/status", "std_msgs/msg/String", String, "latched"),
+    Topic("/relocalization/fitness", "std_msgs/msg/Float32", Float32, "latched"),
     Topic("/grid_map/occupancy", "sensor_msgs/msg/PointCloud2", PointCloud2, "cloud", 0.50),
     Topic(
         "/grid_map/occupancy_inflate",
@@ -81,6 +84,11 @@ UPLINK = [
 DOWNLINK = [
     Topic("/move_base_simple/goal", "geometry_msgs/msg/PoseStamped", PoseStamped),
     Topic("/clicked_point", "geometry_msgs/msg/PointStamped", PointStamped),
+    Topic(
+        "/initialpose",
+        "geometry_msgs/msg/PoseWithCovarianceStamped",
+        PoseWithCovarianceStamped,
+    ),
 ]
 
 TYPE_MAP = {topic.type_name: topic.message_cls for topic in UPLINK + DOWNLINK}

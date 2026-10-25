@@ -7,7 +7,7 @@
     filter_size_map: 0.5
     cube_side_length: 1000.0
     runtime_pos_log_enable: false
-    map_file_path: "/tmp/fastlio_go2_map.pcd"
+    map_file_path: "/home/unitree/SCAN-Planner/maps/go2_scan.pcd"
 
     common:
       lid_topic: "/livox/lidar"
@@ -44,5 +44,6 @@
       scan_bodyframe_pub_en: true
 
     pcd_save:
-      pcd_save_en: false
+      pcd_save_en: true
+      voxel_size: 0.05
       interval: -1

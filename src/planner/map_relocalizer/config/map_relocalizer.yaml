@@ -1,0 +1,33 @@
+/**:
+  ros__parameters:
+    prior_map_file: ""
+    map_frame: world
+    local_frame: fastlio_world
+
+    input_vehicle_topic: /LIO/odom_vehicle
+    input_imu_topic: /LIO/odom_imu
+    input_cloud_topic: /LIO/clouds_lidar
+    initial_pose_topic: /initialpose
+
+    output_vehicle_topic: /LIO/relocalized/odom_vehicle
+    output_imu_topic: /LIO/relocalized/odom_imu
+    status_topic: /relocalization/status
+    fitness_topic: /relocalization/fitness
+    prior_map_topic: /relocalization/map
+
+    prior_map_voxel_size: 0.10
+    scan_voxel_size: 0.10
+    target_crop_radius: 12.0
+    target_crop_z: 3.0
+    min_scan_points: 100
+    min_target_points: 200
+
+    icp_max_correspondence_distance: 0.60
+    icp_max_iterations: 40
+    icp_fitness_threshold: 0.05
+    icp_max_translation_correction: 2.0
+    icp_max_rotation_correction_deg: 45.0
+    max_scan_odom_dt: 0.15
+
+    relocalization_period: 1.0
+    tf_publish_period: 0.05

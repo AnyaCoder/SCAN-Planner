@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <deque>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -15,6 +16,7 @@
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
+#include "sensor_msgs/point_cloud2_iterator.hpp"
 #include "tf2/LinearMath/Quaternion.h"
 #include "tf2/LinearMath/Vector3.h"
 #include "tf2_ros/transform_broadcaster.h"
@@ -133,6 +135,10 @@ public:
         "output_imu_topic", "/LIO/odom_imu");
     output_cloud_topic_ = declare_parameter<std::string>(
         "output_cloud_topic", "/LIO/clouds_lidar");
+    cloud_min_z_ = declare_parameter<double>(
+        "cloud_min_z", -std::numeric_limits<double>::infinity());
+    cloud_max_z_ = declare_parameter<double>(
+        "cloud_max_z", std::numeric_limits<double>::infinity());
     output_frame_id_ = declare_parameter<std::string>("output_frame_id", "world");
     output_child_frame_id_ = declare_parameter<std::string>("output_child_frame_id", "base");
     velocity_window_sec_ = declare_parameter<double>("velocity_window_sec", 1.0);
@@ -151,6 +157,8 @@ public:
     {
       throw std::invalid_argument("velocity and timestamp-gap parameters must be positive");
     }
+    if (cloud_min_z_ >= cloud_max_z_)
+      throw std::invalid_argument("cloud_min_z must be smaller than cloud_max_z");
     world_alignment_ = tf2::Quaternion(
       alignment_x, alignment_y, alignment_z, alignment_w);
     if (!std::isfinite(world_alignment_.length()) || world_alignment_.length() < 1e-9) {
@@ -343,20 +351,102 @@ private:
 
   void onCloud(const sensor_msgs::msg::PointCloud2::ConstSharedPtr & msg)
   {
-    const uint64_t point_count = static_cast<uint64_t>(msg->width) * msg->height;
+    sensor_msgs::msg::PointCloud2 filtered;
+    const sensor_msgs::msg::PointCloud2 * output = msg.get();
+    if (std::isfinite(cloud_max_z_) || std::isfinite(cloud_min_z_)) {
+      filtered = filterCloudByZ(*msg, cloud_min_z_, cloud_max_z_);
+      output = &filtered;
+    }
+
+    const uint64_t point_count =
+        static_cast<uint64_t>(output->width) * output->height;
     cloud_rx_.fetch_add(1, std::memory_order_relaxed);
     {
       std::lock_guard<std::mutex> lock(state_mutex_);
-      cloud_frame_ = msg->header.frame_id;
+      cloud_frame_ = output->header.frame_id;
       cloud_points_ = point_count;
     }
     if (!cloud_seen_.exchange(true, std::memory_order_relaxed)) {
       RCLCPP_INFO(
           get_logger(), "cloud input frame=%s points=%llu",
-          msg->header.frame_id.c_str(), static_cast<unsigned long long>(point_count));
+          output->header.frame_id.c_str(), static_cast<unsigned long long>(point_count));
     }
-    cloud_pub_->publish(*msg);
+    cloud_pub_->publish(*output);
     cloud_tx_.fetch_add(1, std::memory_order_relaxed);
+  }
+
+  static bool hasField(
+      const sensor_msgs::msg::PointCloud2 & msg,
+      const std::string & name)
+  {
+    for (const auto & field : msg.fields) {
+      if (field.name == name)
+        return true;
+    }
+    return false;
+  }
+
+  static sensor_msgs::msg::PointCloud2 filterCloudByZ(
+      const sensor_msgs::msg::PointCloud2 & input,
+      double min_z,
+      double max_z)
+  {
+    if (!hasField(input, "x") || !hasField(input, "y") || !hasField(input, "z")) {
+      return input;
+    }
+
+    std::vector<std::array<float, 4>> points;
+    points.reserve(static_cast<size_t>(input.width) * input.height);
+    const bool has_intensity = hasField(input, "intensity");
+    try {
+      sensor_msgs::PointCloud2ConstIterator<float> x(input, "x");
+      sensor_msgs::PointCloud2ConstIterator<float> y(input, "y");
+      sensor_msgs::PointCloud2ConstIterator<float> z(input, "z");
+      if (has_intensity) {
+        sensor_msgs::PointCloud2ConstIterator<float> intensity(input, "intensity");
+        for (; x != x.end(); ++x, ++y, ++z, ++intensity) {
+          if (!std::isfinite(*x) || !std::isfinite(*y) || !std::isfinite(*z) ||
+              *z < min_z || *z > max_z)
+            continue;
+          points.push_back({*x, *y, *z, *intensity});
+        }
+      } else {
+        for (; x != x.end(); ++x, ++y, ++z) {
+          if (!std::isfinite(*x) || !std::isfinite(*y) || !std::isfinite(*z) ||
+              *z < min_z || *z > max_z)
+            continue;
+          points.push_back({*x, *y, *z, 0.0f});
+        }
+      }
+    } catch (const std::exception &) {
+      return input;
+    }
+
+    sensor_msgs::msg::PointCloud2 output;
+    output.header = input.header;
+    sensor_msgs::PointCloud2Modifier modifier(output);
+    modifier.setPointCloud2Fields(
+        4,
+        "x", 1, sensor_msgs::msg::PointField::FLOAT32,
+        "y", 1, sensor_msgs::msg::PointField::FLOAT32,
+        "z", 1, sensor_msgs::msg::PointField::FLOAT32,
+        "intensity", 1, sensor_msgs::msg::PointField::FLOAT32);
+    modifier.resize(points.size());
+    sensor_msgs::PointCloud2Iterator<float> ox(output, "x");
+    sensor_msgs::PointCloud2Iterator<float> oy(output, "y");
+    sensor_msgs::PointCloud2Iterator<float> oz(output, "z");
+    sensor_msgs::PointCloud2Iterator<float> oi(output, "intensity");
+    for (const auto & point : points) {
+      *ox = point[0];
+      *oy = point[1];
+      *oz = point[2];
+      *oi = point[3];
+      ++ox;
+      ++oy;
+      ++oz;
+      ++oi;
+    }
+    return output;
   }
 
   void logStats()
@@ -392,6 +482,8 @@ private:
   std::string output_vehicle_topic_;
   std::string output_imu_topic_;
   std::string output_cloud_topic_;
+  double cloud_min_z_;
+  double cloud_max_z_;
   std::string output_frame_id_;
   std::string output_child_frame_id_;
   double velocity_window_sec_;

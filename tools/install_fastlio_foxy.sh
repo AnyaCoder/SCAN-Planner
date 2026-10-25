@@ -8,6 +8,7 @@ PATCHES=(
   "$PATCH_DIR/fast_lio_foxy_service_callback.patch"
   "$PATCH_DIR/fast_lio_tf_remap.patch"
   "$PATCH_DIR/fast_lio_gravity_alignment.patch"
+  "$PATCH_DIR/fast_lio_dense_map_save.patch"
 )
 UPSTREAM="https://github.com/hku-mars/FAST_LIO.git"
 COMMIT="a4743b095409588842a5b30ddfa27e29d2f99164"

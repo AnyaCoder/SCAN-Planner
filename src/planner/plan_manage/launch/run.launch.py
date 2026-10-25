@@ -62,6 +62,9 @@ def _setup(context):
     publish_robot_state = _as_bool(
         LaunchConfiguration("publish_robot_state").perform(context)
     )
+    use_relocalized_odom = _as_bool(
+        LaunchConfiguration("use_relocalized_odom").perform(context)
+    )
     lidar_need_extrinsic = _as_bool(
         LaunchConfiguration("lidar_need_extrinsic").perform(context)
     )
@@ -78,8 +81,12 @@ def _setup(context):
         )
 
     if is_real:
-        body_pose = "/LIO/odom_vehicle"
-        sensor_pose = "/LIO/odom_imu"
+        if use_relocalized_odom:
+            body_pose = "/LIO/relocalized/odom_vehicle"
+            sensor_pose = "/LIO/relocalized/odom_imu"
+        else:
+            body_pose = "/LIO/odom_vehicle"
+            sensor_pose = "/LIO/odom_imu"
         cloud = "/LIO/clouds_lidar"
         depth = "/camera/aligned_depth_to_color/image_raw"
         cloud_is_world = False
@@ -254,6 +261,11 @@ def generate_launch_description():
                 "publish_robot_state",
                 default_value="true",
                 description="Publish the Go2 URDF; requires the xacro Python module",
+            ),
+            DeclareLaunchArgument(
+                "use_relocalized_odom",
+                default_value="false",
+                description="Use /LIO/relocalized/* instead of raw FAST-LIO odometry",
             ),
             DeclareLaunchArgument(
                 "lidar_need_extrinsic",

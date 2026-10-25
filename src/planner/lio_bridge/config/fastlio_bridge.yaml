@@ -1,7 +1,8 @@
 lio_bridge:
   ros__parameters:
-    world_alignment_x: -0.0077830318
-    world_alignment_y: -0.0159851298
+    world_alignment_x: -0.0027168670
+    world_alignment_y: -0.0064037947
     world_alignment_z: 0.0
-    world_alignment_w: 0.9998419375
+    world_alignment_w: 0.9999758047
+    cloud_max_z: 1.0
     align_base_on_start: true
