@@ -114,6 +114,7 @@ grep -Fq -- 'name="lo"' "$LOCAL_DDS_CONFIG" || die "工作站 DDS 未绑定 lo: 
 
 set +u
 source /opt/ros/foxy/setup.bash
+# shellcheck disable=SC1090
 source "$LOCAL_WS/install/local_setup.bash"
 set -u
 

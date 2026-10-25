@@ -9,6 +9,7 @@
 
 # ROS runtime state
 /.ros/
+/maps/
 *.bag
 *.db3
 *.mcap
