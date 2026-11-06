@@ -73,6 +73,18 @@ compressed per-topic and limited to 1 Hz because a raw frame is about 3.9 MB;
 use global `--compress` only on a severely bandwidth-limited link.
 `start_scan_stack.sh` starts and stops both ends automatically.
 
+The workstation pulls the Go2 front camera directly from
+`http://192.168.76.1:8765/frame.jpg` over Wi-Fi, without adding a ROS node on
+the robot or passing camera frames through the state bridge. A separate
+`front_camera_relay.py` process publishes `CompressedImage`, then the C++
+`image_transport republish` node decodes it to
+`/go2/front_camera/image_raw` for the RViz `Front Camera` display.
+The workstation needs `ros-foxy-compressed-image-transport`.
+The Unitree source is 1920x1080; `front_camera_bridge.py` downsamples it to
+1280x720 before JPEG encoding. At the default 15 Hz target this is about
+1.4 MB/s; the current workstation observes 11-13 Hz end to end. Disable it
+with `SCAN_CAMERA_ENABLE=0`; lower the bandwidth with `SCAN_CAMERA_FPS=5`.
+
 `restart_rviz.sh` reopens only the workstation RViz window when the Go2 stack
 is still running. It validates `/tf`, `/LIO/clouds_lidar`, and `world -> body`,
 and restarts only the local TCP client if the visualization data stream is

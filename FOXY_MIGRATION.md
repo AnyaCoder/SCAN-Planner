@@ -29,7 +29,8 @@ backported to Ubuntu 20.04 / ROS 2 Foxy for the Go2 onboard computer.
 cd ~/SCAN-Planner/foxy_ws
 source /opt/ros/foxy/setup.bash
 sudo apt install libarmadillo-dev libeigen3-dev libglm-dev \
-  libglew-dev libglfw3-dev libgl1-mesa-dev libglu1-mesa-dev
+  libglew-dev libglfw3-dev libgl1-mesa-dev libglu1-mesa-dev \
+  ros-foxy-compressed-image-transport
 colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/setup.bash
 ```
