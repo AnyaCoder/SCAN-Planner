@@ -14,6 +14,20 @@
 *.db3
 *.mcap
 
+# Local perception models and runtime environments
+/perception/.venv/
+/perception/vlm_py/
+/perception/models/
+/perception/*.onnx
+/perception/*.pt
+/perception/*.pth
+/perception/*.safetensors
+/perception/*.engine
+/perception/data/
+/perception/wheels/
+/perception/yolo_trt/build/
+/perception/clip_trt/build/
+
 # Python cache and test output
 __pycache__/
 *.py[cod]
