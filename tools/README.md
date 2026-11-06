@@ -68,6 +68,33 @@ python3 tools/scan_wifi_bridge.py \
 
 The bridge keeps only the newest sample per topic, rejects stale backlogs, and
 compensates the timestamp offset between the two clocks in both directions.
+The TCP server accepts multiple clients concurrently. Each client has its own
+latest-value queue, so a slow client drops old frames without blocking another
+client. A non-latched topic is serialized only while at least one connected
+client subscribes to it, so the bridge does not spend Go2 CPU building frames
+that no one will receive.
+
+Each client can limit the uplink topics it receives:
+
+```bash
+# Full SCAN visualization, the default
+python3 tools/scan_wifi_bridge.py \
+  --client --host 192.168.76.1 --port 9000
+
+# Point cloud and pose only
+python3 tools/scan_wifi_bridge.py \
+  --client --host 192.168.76.1 --port 9000 \
+  --topics /LIO/clouds_lidar,/LIO/odom_vehicle,/tf,/tf_static
+
+# Control/downlink only; receive no uplink topics
+python3 tools/scan_wifi_bridge.py \
+  --client --host 192.168.76.1 --port 9000 --topics none
+```
+
+The filter is negotiated during the clock handshake. Topics not requested by
+any connected client are skipped before serialization. The bridge protocol
+version is bumped whenever this handshake changes; all machines must be
+updated together.
 Global compression is off by default. `/grid_map/occupancy_inflate` is always
 compressed per-topic and limited to 1 Hz because a raw frame is about 3.9 MB;
 use global `--compress` only on a severely bandwidth-limited link.

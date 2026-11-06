@@ -3,11 +3,13 @@
 
 The Go2 runs this file with --server and keeps its ROS graph on eth0.  The
 workstation runs --client with its ROS graph on lo.  Only selected state topics
-cross the Wi-Fi link; goals are sent back on the same TCP connection.
+cross the Wi-Fi link; goals are sent back on the same TCP connection. The
+server supports multiple concurrent clients with per-client topic filters.
 """
 
 import argparse
 import collections
+import json
 import socket
 import struct
 import threading
@@ -31,7 +33,7 @@ from visualization_msgs.msg import Marker
 
 
 MAGIC = b"SCWB"
-VERSION = 2
+VERSION = 3
 FLAG_ZLIB = 1
 HEADER = struct.Struct("!4sBBHHI")
 MAX_PAYLOAD = 128 * 1024 * 1024
@@ -183,41 +185,105 @@ def recv_frame(sock, deadline=None):
     return topic_bytes.decode("utf-8"), type_bytes.decode("utf-8"), payload
 
 
-class FrameBus:
-    def __init__(self):
+class ClientSession:
+    def __init__(self, conn, peer, subscriptions=None):
+        self.conn = conn
+        self.peer = peer
+        self.subscriptions = subscriptions
+        self.stop_event = threading.Event()
         self._condition = threading.Condition()
         self._pending = collections.OrderedDict()
-        self._latest = {}
-        self._active = False
+        self._writer = None
+        self.sent = 0
 
-    def push(self, topic, type_name, payload, compress=False):
-        item = (topic, type_name, payload, compress)
+    def accepts(self, topic):
+        return self.subscriptions is None or topic in self.subscriptions
+
+    def offer(self, item):
+        topic = item[0]
+        if not self.accepts(topic):
+            return
         with self._condition:
-            self._latest[topic] = item
-            if self._active:
-                self._pending[topic] = item
-                self._pending.move_to_end(topic)
+            if self.stop_event.is_set():
+                return
+            self._pending[topic] = item
+            self._pending.move_to_end(topic)
             self._condition.notify()
-
-    def begin_client(self):
-        with self._condition:
-            self._active = True
-            self._pending.clear()
-            return list(self._latest.values())
-
-    def end_client(self):
-        with self._condition:
-            self._active = False
-            self._pending.clear()
-            self._condition.notify_all()
 
     def pop(self, timeout):
         with self._condition:
-            if not self._pending:
+            if not self._pending and not self.stop_event.is_set():
                 self._condition.wait(timeout)
             if not self._pending:
                 return None
             return self._pending.popitem(last=False)[1]
+
+    def start(self):
+        self._writer = threading.Thread(
+            target=self._write_loop,
+            name="bridge-client-%s" % (self.peer,),
+            daemon=True,
+        )
+        self._writer.start()
+
+    def _write_loop(self):
+        while not self.stop_event.is_set() and rclpy.ok():
+            item = self.pop(0.5)
+            if item is None:
+                continue
+            try:
+                self.conn.sendall(encode_frame(*item))
+                self.sent += 1
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                break
+        self.close()
+
+    def close(self):
+        self.stop_event.set()
+        with self._condition:
+            self._pending.clear()
+            self._condition.notify_all()
+
+
+class FrameStore:
+    SNAPSHOT_MAX_AGE = 2.0
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._latest = collections.OrderedDict()
+        self._sessions = set()
+
+    def wants(self, topic):
+        with self._lock:
+            return any(session.accepts(topic) for session in self._sessions)
+
+    def add_client(self, session):
+        with self._lock:
+            self._sessions.add(session)
+
+    def remove_client(self, session):
+        with self._lock:
+            self._sessions.discard(session)
+
+    def snapshot(self, session):
+        now = time.monotonic()
+        with self._lock:
+            items = list(self._latest.values())
+        return [
+            item
+            for timestamp, item, persistent in items
+            if session.accepts(item[0])
+            and (persistent or now - timestamp <= self.SNAPSHOT_MAX_AGE)
+        ]
+
+    def push(self, item, persistent=False):
+        topic = item[0]
+        with self._lock:
+            self._latest[topic] = (time.monotonic(), item, persistent)
+            self._latest.move_to_end(topic)
+            sessions = tuple(self._sessions)
+        for session in sessions:
+            session.offer(item)
 
 
 def shift_stamp(stamp, delta_s):
@@ -248,6 +314,27 @@ def clock_frame(topic, value):
     return encode_frame(topic, "clock", ("%.9f" % value).encode("ascii"))
 
 
+def clock_ack_frame(value, topics):
+    payload = json.dumps(
+        {
+            "time": value,
+            "topics": None if topics is None else sorted(topics),
+        },
+        separators=(",", ":"),
+    ).encode("ascii")
+    return encode_frame(CLOCK_ACK, "clock", payload)
+
+
+def clock_ack_value(payload):
+    data = json.loads(payload.decode("ascii"))
+    topics = data.get("topics")
+    if topics is None:
+        return float(data["time"]), None
+    if not isinstance(topics, list):
+        raise ValueError("clock topic filter must be a list")
+    return float(data["time"]), {str(topic) for topic in topics}
+
+
 def synchronize_clock(conn):
     probe_sent = time.time()
     conn.sendall(clock_frame(CLOCK_PROBE, probe_sent))
@@ -257,18 +344,19 @@ def synchronize_clock(conn):
     topic, type_name, payload = frame
     if topic != CLOCK_ACK or type_name != "clock":
         raise ValueError("unexpected clock response %s (%s)" % (topic, type_name))
-    probe_received = clock_value(payload)
+    probe_received, subscriptions = clock_ack_value(payload)
     response_received = time.time()
     offset_s = ((probe_sent - probe_received) + (response_received - probe_received)) / 2.0
     conn.sendall(clock_frame(CLOCK_APPLY, offset_s))
-    return offset_s
+    return offset_s, subscriptions
 
 
 class ServerNode(Node):
     def __init__(self):
         super().__init__("scan_wifi_state_server")
-        self.bus = FrameBus()
+        self.store = FrameStore()
         self.last_emit = {}
+        self._downlink_lock = threading.Lock()
         self.downlink = {topic.name: topic for topic in DOWNLINK}
         self.downlink_publishers = {
             topic.name: self.create_publisher(topic.message_cls, topic.name, make_qos("reliable"))
@@ -287,12 +375,21 @@ class ServerNode(Node):
         self.get_logger().info("SCAN Wi-Fi state server ready")
 
     def on_uplink(self, spec, msg):
+        persistent = spec.profile == "latched"
+        if not persistent and not self.store.wants(spec.name):
+            return
         now = time.monotonic()
         if spec.interval > 0.0 and now - self.last_emit.get(spec.name, 0.0) < spec.interval:
             return
         self.last_emit[spec.name] = now
         try:
-            self.bus.push(spec.name, spec.type_name, serialize_message(msg), spec.compress)
+            item = (
+                spec.name,
+                spec.type_name,
+                serialize_message(msg),
+                spec.compress,
+            )
+            self.store.push(item, persistent)
         except Exception:
             self.get_logger().error("serialize failed for %s\n%s" % (spec.name, traceback.format_exc()))
 
@@ -303,26 +400,11 @@ class ServerNode(Node):
             return
         try:
             message = deserialize_message(payload, spec.message_cls)
-            self.downlink_publishers[topic].publish(message)
+            with self._downlink_lock:
+                self.downlink_publishers[topic].publish(message)
             self.get_logger().info("downlink %s -> dog graph" % topic)
         except Exception:
             self.get_logger().error("downlink failed for %s\n%s" % (topic, traceback.format_exc()))
-
-
-def downlink_reader(conn, node, stop_event):
-    while not stop_event.is_set() and rclpy.ok():
-        try:
-            frame = recv_frame(conn)
-            if frame is None:
-                break
-            node.publish_downlink(*frame)
-        except socket.timeout:
-            continue
-        except Exception:
-            if rclpy.ok():
-                node.get_logger().warning("server downlink read failed: %s" % traceback.format_exc())
-            break
-    stop_event.set()
 
 
 def serve_connection(conn, peer, node):
@@ -331,41 +413,68 @@ def serve_connection(conn, peer, node):
     conn.settimeout(10.0)
     node.get_logger().info("Wi-Fi client connected: %s" % (peer,))
     try:
-        offset_s = synchronize_clock(conn)
-        node.get_logger().info("Wi-Fi clock offset: Go2 - workstation = %.6f s" % offset_s)
+        offset_s, subscriptions = synchronize_clock(conn)
     except Exception:
         node.get_logger().warning("Wi-Fi clock sync failed: %s" % traceback.format_exc())
         conn.close()
         return
-    snapshot = node.bus.begin_client()
-    stop_event = threading.Event()
-    reader = threading.Thread(
-        target=downlink_reader, args=(conn, node, stop_event), daemon=True
+
+    if subscriptions is not None:
+        known = {topic.name for topic in UPLINK}
+        unknown = subscriptions - known
+        if unknown:
+            node.get_logger().warning(
+                "client %s requested unknown topics: %s"
+                % (peer, ", ".join(sorted(unknown)))
+            )
+        subscriptions &= known
+
+    session = ClientSession(conn, peer, subscriptions)
+    node.get_logger().info(
+        "Wi-Fi clock offset for %s: Go2 - workstation = %.6f s, topics=%s"
+        % (
+            peer,
+            offset_s,
+            "all" if subscriptions is None else len(subscriptions),
+        )
     )
-    reader.start()
-    sent = 0
     try:
-        for item in snapshot:
+        for item in node.store.snapshot(session):
             conn.sendall(encode_frame(*item))
-            sent += 1
-        while not stop_event.is_set() and rclpy.ok():
-            item = node.bus.pop(0.5)
-            if item is not None:
-                conn.sendall(encode_frame(*item))
-                sent += 1
-            if not reader.is_alive():
-                break
+            session.sent += 1
     except (BrokenPipeError, ConnectionResetError, OSError):
-        pass
+        conn.close()
+        return
+
+    node.store.add_client(session)
+    session.start()
+    try:
+        conn.settimeout(1.0)
+        while not session.stop_event.is_set() and rclpy.ok():
+            try:
+                frame = recv_frame(conn, time.monotonic() + 1.0)
+            except TimeoutError:
+                continue
+            if frame is None:
+                break
+            node.publish_downlink(*frame)
+    except (ConnectionResetError, OSError, ValueError):
+        if rclpy.ok():
+            node.get_logger().warning(
+                "Wi-Fi client %s read failed: %s"
+                % (peer, traceback.format_exc())
+            )
     finally:
-        stop_event.set()
-        node.bus.end_client()
+        node.store.remove_client(session)
+        session.close()
         try:
             conn.shutdown(socket.SHUT_RDWR)
         except OSError:
             pass
         conn.close()
-        node.get_logger().info("Wi-Fi client disconnected (sent=%d)" % sent)
+        node.get_logger().info(
+            "Wi-Fi client %s disconnected (sent=%d)" % (peer, session.sent)
+        )
 
 
 def run_server(args):
@@ -379,23 +488,34 @@ def run_server(args):
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind((args.bind, args.port))
-    server.listen(1)
+    server.listen(8)
     server.settimeout(1.0)
     node.get_logger().info(
-        "listening on %s:%d (compression=%s)"
+        "listening on %s:%d (compression=%s, multi-client)"
         % (args.bind, args.port, "on" if ENABLE_COMPRESSION else "off")
     )
+    client_threads = set()
     try:
         while rclpy.ok():
             try:
                 conn, peer = server.accept()
             except socket.timeout:
                 continue
-            serve_connection(conn, peer, node)
+            client_threads = {thread for thread in client_threads if thread.is_alive()}
+            thread = threading.Thread(
+                target=serve_connection,
+                args=(conn, peer, node),
+                name="bridge-client-%s" % (peer,),
+                daemon=True,
+            )
+            client_threads.add(thread)
+            thread.start()
     except KeyboardInterrupt:
         pass
     finally:
         server.close()
+        for thread in client_threads:
+            thread.join(timeout=1.0)
         executor.shutdown()
         node.destroy_node()
         if rclpy.ok():
@@ -407,6 +527,7 @@ class ClientNode(Node):
         super().__init__("scan_wifi_state_client")
         self._connection = None
         self._connection_lock = threading.Lock()
+        self._send_lock = threading.Lock()
         self._clock_offset = 0.0
         self._topic_publishers = {}
         for topic in DOWNLINK:
@@ -440,7 +561,8 @@ class ClientNode(Node):
                 self.get_logger().warning("drop %s: Go2 Wi-Fi bridge disconnected" % spec.name)
                 return
             try:
-                conn.sendall(frame)
+                with self._send_lock:
+                    conn.sendall(frame)
                 self.get_logger().info("downlink %s -> Go2" % spec.name)
             except OSError as exc:
                 self.get_logger().error("send %s failed: %s" % (spec.name, exc))
@@ -461,6 +583,14 @@ class ClientNode(Node):
         publisher.publish(message)
 
 
+def parse_topic_filter(value):
+    if not value or value == "all":
+        return None
+    if value == "none":
+        return set()
+    return {item.strip() for item in value.split(",") if item.strip()}
+
+
 def run_client(args):
     rclpy.init()
     node = ClientNode()
@@ -470,6 +600,19 @@ def run_client(args):
     spin_thread.start()
     count = 0
     last_report = time.monotonic()
+    requested_topics = parse_topic_filter(args.topics)
+    if requested_topics is not None:
+        unknown = requested_topics - {topic.name for topic in UPLINK}
+        if unknown:
+            node.get_logger().warning(
+                "ignoring unknown uplink topics: %s"
+                % ", ".join(sorted(unknown))
+            )
+        requested_topics &= {topic.name for topic in UPLINK}
+    node.get_logger().info(
+        "requested uplink topics: %s"
+        % ("all" if requested_topics is None else len(requested_topics))
+    )
     try:
         while rclpy.ok():
             try:
@@ -491,7 +634,9 @@ def run_client(args):
                         break
                     topic, type_name, payload = frame
                     if topic == CLOCK_PROBE and type_name == "clock":
-                        conn.sendall(clock_frame(CLOCK_ACK, time.time()))
+                        conn.sendall(
+                            clock_ack_frame(time.time(), requested_topics)
+                        )
                         continue
                     if topic == CLOCK_APPLY and type_name == "clock":
                         offset_s = clock_value(payload)
@@ -532,6 +677,14 @@ def main():
     parser.add_argument("--bind", default="0.0.0.0")
     parser.add_argument("--host", default="192.168.76.1")
     parser.add_argument("--port", type=int, default=9000)
+    parser.add_argument(
+        "--topics",
+        default="",
+        help=(
+            "client uplink topic filter: comma-separated names, "
+            "'all' (default), or 'none'"
+        ),
+    )
     parser.add_argument("--compress", action="store_true")
     args = parser.parse_args()
     ENABLE_COMPRESSION = args.compress
