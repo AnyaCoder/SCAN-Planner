@@ -23,6 +23,8 @@ CLICKED_WAYPOINTS_DRIVE=${SCAN_CLICKED_WAYPOINTS_DRIVE:-1}
 GO2_WIFI_HOST=${GO2_WIFI_HOST:-192.168.76.1}
 LOCAL_DDS_CONFIG=${SCAN_LOCAL_DDS_CONFIG:-$HOME/.config/ros2/cyclonedds.xml}
 REMOTE_DDS_CONFIG=${SCAN_REMOTE_DDS_CONFIG:-$REMOTE_HOME/.config/ros2/cyclonedds.xml}
+LOCAL_PYTHON_EXECUTABLE=${SCAN_PYTHON:-/usr/bin/python3}
+REMOTE_PYTHON_EXECUTABLE=${SCAN_REMOTE_PYTHON:-/usr/bin/python3}
 
 export ROS_DOMAIN_ID
 
@@ -270,6 +272,11 @@ check_local_workspace() {
   source "$LOCAL_WS/install/local_setup.bash"
   set -u
 
+  [[ -x "$LOCAL_PYTHON_EXECUTABLE" ]] || \
+    die "找不到 ROS Python: $LOCAL_PYTHON_EXECUTABLE"
+  "$LOCAL_PYTHON_EXECUTABLE" -c 'import rclpy' >/dev/null 2>&1 || \
+    die "$LOCAL_PYTHON_EXECUTABLE 无法导入 rclpy；不要用 Miniconda Python 启动 ROS"
+
   export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
   export CYCLONEDDS_URI=file://$LOCAL_DDS_CONFIG
   export LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH:-}
@@ -371,11 +378,11 @@ wait_for_remote_node /cmd_vel_sport_bridge 25 || \
 
 printf '[6/8] 启动 Wi-Fi TCP 状态桥\n'
 start_remote wifi_bridge "$REMOTE_ROOT" \
-  "python3 $REMOTE_ROOT/tools/scan_wifi_bridge.py --server --bind 0.0.0.0 --port 9000"
+  "$REMOTE_PYTHON_EXECUTABLE $REMOTE_ROOT/tools/scan_wifi_bridge.py --server --bind 0.0.0.0 --port 9000"
 wait_for_remote_log "$REMOTE_LOG_DIR/wifi_bridge.log" "listening on" 25 || \
   { show_remote_log "$REMOTE_LOG_DIR/wifi_bridge.log"; die "Go2 TCP 桥未开始监听 9000"; }
 start_local wifi_bridge \
-  "python3 $SCRIPT_DIR/scan_wifi_bridge.py --client --host $GO2_WIFI_HOST --port 9000"
+  "$LOCAL_PYTHON_EXECUTABLE $SCRIPT_DIR/scan_wifi_bridge.py --client --host $GO2_WIFI_HOST --port 9000"
 wait_for_local_log "$LOCAL_LOG_DIR/wifi_bridge.log" "Wi-Fi clock offset" 25 || \
   { tail -n 80 "$LOCAL_LOG_DIR/wifi_bridge.log" >&2 2>/dev/null || true; die "工作站 TCP 桥未连上 Go2"; }
 wait_for_local_topic /tf 25 || die "本地 TCP 桥未发布 /tf"
@@ -385,7 +392,8 @@ wait_for_local_topic /grid_map/occupancy 30 || die "本地 TCP 桥未转发 /gri
 printf '\n[7/8] 打开 Publish Point 路径点记录器终端\n'
 if clicked_waypoints_enabled; then
   recorder_args=(
-    ros2 run scan_planner clicked_waypoint_recorder.py
+    "$LOCAL_PYTHON_EXECUTABLE"
+    "$LOCAL_WS/install/scan_planner/lib/scan_planner/clicked_waypoint_recorder.py"
     --output "$CLICKED_WAYPOINTS_FILE"
     --z "$CLICKED_WAYPOINTS_Z"
   )

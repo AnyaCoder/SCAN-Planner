@@ -15,6 +15,8 @@ REMOTE_DDS_CONFIG=/home/unitree/.config/ros2/cyclonedds.xml
 RELOC_TIMEOUT=${SCAN_RELOCALIZATION_TIMEOUT:-180}
 NAVI_MODE=${SCAN_NAVI_MODE:-2}
 RVIZ_CONFIG=$WS/install/map_relocalizer/share/map_relocalizer/rviz/relocalization.rviz
+PYTHON_EXECUTABLE=${SCAN_PYTHON:-/usr/bin/python3}
+REMOTE_PYTHON_EXECUTABLE=${SCAN_REMOTE_PYTHON:-/usr/bin/python3}
 
 die() {
   printf '错误: %s\n' "$*" >&2
@@ -52,6 +54,9 @@ source_local() {
   export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
   export CYCLONEDDS_URI=file://$LOCAL_DDS_CONFIG
   export LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH:-}
+  [[ -x "$PYTHON_EXECUTABLE" ]] || die "找不到 ROS Python: $PYTHON_EXECUTABLE"
+  "$PYTHON_EXECUTABLE" -c 'import rclpy' >/dev/null 2>&1 || \
+    die "$PYTHON_EXECUTABLE 无法导入 rclpy；不要用 Miniconda Python 启动 ROS"
 }
 
 check_prereqs() {
@@ -142,13 +147,13 @@ setsid -f bash -c "cd /unitree/module/graph_pid_ws && exec ros2 launch livox_ros
 setsid -f bash -c "cd $REMOTE_ROOT && exec ros2 launch fast_lio mapping.launch.py rviz:=false config_path:=$REMOTE_ROOT/src/planner/lio_bridge/config config_file:=mid360_fastlio.yaml tf_topic:=/fastlio/tf" >"$REMOTE_LOG_DIR/fastlio.log" 2>&1 </dev/null
 setsid -f bash -c "cd $REMOTE_ROOT && exec ros2 launch lio_bridge fastlio_bridge.launch.py output_frame_id:=fastlio_world" >"$REMOTE_LOG_DIR/lio_bridge.log" 2>&1 </dev/null
 setsid -f bash -c "cd $REMOTE_ROOT && exec ros2 launch map_relocalizer map_relocalizer.launch.py prior_map_file:=$REMOTE_MAP rviz:=false" >"$REMOTE_LOG_DIR/map_relocalizer.log" 2>&1 </dev/null
-setsid -f bash -c "cd $REMOTE_ROOT && exec python3 tools/scan_wifi_bridge.py --server --bind 0.0.0.0 --port 9000" >"$REMOTE_LOG_DIR/wifi_bridge.log" 2>&1 </dev/null
+setsid -f bash -c "cd $REMOTE_ROOT && exec $REMOTE_PYTHON_EXECUTABLE tools/scan_wifi_bridge.py --server --bind 0.0.0.0 --port 9000" >"$REMOTE_LOG_DIR/wifi_bridge.log" 2>&1 </dev/null
 REMOTE
 }
 
 start_local_bridge() {
   mkdir -p "$LOCAL_LOG_DIR"
-  setsid -f bash -c "cd '$WS' && exec python3 tools/scan_wifi_bridge.py --client --host '$GO2_WIFI_HOST' --port 9000" \
+  setsid -f bash -c "cd '$WS' && exec '$PYTHON_EXECUTABLE' tools/scan_wifi_bridge.py --client --host '$GO2_WIFI_HOST' --port 9000" \
     >"$LOCAL_LOG_DIR/wifi_bridge.log" 2>&1 </dev/null
 }
 
@@ -164,7 +169,7 @@ wait_local_topic() {
 }
 
 check_relocalization_converged() {
-  timeout 6 python3 - <<'PY'
+  timeout 6 "$PYTHON_EXECUTABLE" - <<'PY'
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
@@ -227,7 +232,7 @@ export CYCLONEDDS_URI=file://$REMOTE_DDS_CONFIG
 export LD_LIBRARY_PATH=/usr/local/lib:\${LD_LIBRARY_PATH:-}
 mkdir -p "$REMOTE_LOG_DIR"
 if ! pgrep -f '[p]ublish_unitree_joint_states.py' >/dev/null 2>&1; then
-  setsid -f bash -c "cd $REMOTE_ROOT && exec python3 tools/publish_unitree_joint_states.py" >"$REMOTE_LOG_DIR/joint_states.log" 2>&1 </dev/null
+  setsid -f bash -c "cd $REMOTE_ROOT && exec $REMOTE_PYTHON_EXECUTABLE tools/publish_unitree_joint_states.py" >"$REMOTE_LOG_DIR/joint_states.log" 2>&1 </dev/null
 fi
 if ! pgrep -f '/lib/cmd_vel_sport_bridge/cmd_vel_sport_bridge' >/dev/null 2>&1; then
   setsid -f bash -c "cd $REMOTE_ROOT && exec ros2 launch cmd_vel_sport_bridge cmd_vel_sport_bridge.launch.py" >"$REMOTE_LOG_DIR/cmd_vel_sport.log" 2>&1 </dev/null
@@ -285,7 +290,7 @@ status_chain() {
   printf '=== remote ===\n'
   ssh "$GO2_HOST" "ps -eo pid,args | grep -E 'livox_ros_driver2_node|fastlio_mapping|lio_bridge_node|map_relocalizer_node|cmd_vel_sport_bridge|scan_planner_node|closed_loop_controller|scan_wifi_bridge.py --server' | grep -v grep || true" || true
   printf '=== relocalization ===\n'
-  timeout 6 python3 - <<'PY' || true
+  timeout 6 "$PYTHON_EXECUTABLE" - <<'PY' || true
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy

@@ -8,6 +8,7 @@ LOCAL_DDS_CONFIG=${SCAN_LOCAL_DDS_CONFIG:-$HOME/.config/ros2/cyclonedds.xml}
 GO2_WIFI_HOST=${GO2_WIFI_HOST:-192.168.76.1}
 BRIDGE_PORT=${SCAN_BRIDGE_PORT:-9000}
 BRIDGE_LOG="$LOCAL_LOG_DIR/wifi_bridge.log"
+PYTHON_EXECUTABLE=${SCAN_PYTHON:-/usr/bin/python3}
 
 die() {
   printf '错误: %s\n' "$*" >&2
@@ -55,7 +56,7 @@ start_bridge() {
   mkdir -p "$LOCAL_LOG_DIR"
   printf '启动本地 TCP 客户端...\n'
   setsid -f bash -c \
-    "cd $(printf '%q' "$LOCAL_WS") && exec python3 $(printf '%q' "$SCRIPT_DIR/scan_wifi_bridge.py") --client --host $(printf '%q' "$GO2_WIFI_HOST") --port $(printf '%q' "$BRIDGE_PORT")" \
+    "cd $(printf '%q' "$LOCAL_WS") && exec $(printf '%q' "$PYTHON_EXECUTABLE") $(printf '%q' "$SCRIPT_DIR/scan_wifi_bridge.py") --client --host $(printf '%q' "$GO2_WIFI_HOST") --port $(printf '%q' "$BRIDGE_PORT")" \
     >"$BRIDGE_LOG" 2>&1 </dev/null
 }
 
@@ -117,6 +118,10 @@ source /opt/ros/foxy/setup.bash
 # shellcheck disable=SC1090
 source "$LOCAL_WS/install/local_setup.bash"
 set -u
+
+[[ -x "$PYTHON_EXECUTABLE" ]] || die "找不到 ROS Python: $PYTHON_EXECUTABLE"
+"$PYTHON_EXECUTABLE" -c 'import rclpy' >/dev/null 2>&1 || \
+  die "$PYTHON_EXECUTABLE 无法导入 rclpy；不要用 Miniconda Python 启动 ROS"
 
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 export CYCLONEDDS_URI=file://$LOCAL_DDS_CONFIG
