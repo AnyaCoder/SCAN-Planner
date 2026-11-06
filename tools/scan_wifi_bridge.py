@@ -60,6 +60,12 @@ UPLINK = [
     Topic("/tf_static", "tf2_msgs/msg/TFMessage", TFMessage, "latched"),
     Topic("/LIO/odom_vehicle", "nav_msgs/msg/Odometry", Odometry, "sensor"),
     Topic("/LIO/odom_imu", "nav_msgs/msg/Odometry", Odometry, "sensor"),
+    Topic(
+        "/LIO/relocalized/odom_vehicle",
+        "nav_msgs/msg/Odometry",
+        Odometry,
+        "sensor",
+    ),
     Topic("/LIO/clouds_lidar", "sensor_msgs/msg/PointCloud2", PointCloud2, "cloud", 0.20),
     Topic("/relocalization/map", "sensor_msgs/msg/PointCloud2", PointCloud2, "latched"),
     Topic("/relocalization/status", "std_msgs/msg/String", String, "latched"),
