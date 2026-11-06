@@ -97,14 +97,35 @@ start_local() {
 open_local_terminal() {
   local title=$1
   local body=$2
+  local error_file
+  error_file=$(mktemp)
   if command -v gnome-terminal >/dev/null 2>&1; then
-    gnome-terminal --title="$title" --working-directory="$LOCAL_WS" -- \
-      bash -c "$body"
-  elif command -v x-terminal-emulator >/dev/null 2>&1; then
-    (cd "$LOCAL_WS" && x-terminal-emulator -e bash -c "$body")
-  else
-    die "找不到终端模拟器，无法打开 Publish Point 记录器终端"
+    # The persistent GNOME Terminal server can keep a stale screen object.
+    # A private server is slower to start but reliable after desktop restarts.
+    # Run it detached because --disable-factory waits for the terminal to close.
+    setsid -f gnome-terminal --disable-factory --title="$title" \
+      --working-directory="$LOCAL_WS" -- bash -c "$body" \
+      >/dev/null 2>"$error_file" || true
+    sleep 0.5
+    if ! grep -Fq 'Error creating terminal' "$error_file"; then
+      rm -f "$error_file"
+      return 0
+    fi
+    cat "$error_file" >&2 || true
   fi
+  if command -v x-terminal-emulator >/dev/null 2>&1; then
+    setsid -f bash -c \
+      "cd $(printf '%q' "$LOCAL_WS") && exec x-terminal-emulator -e bash -c $(printf '%q' "$body")" \
+      >/dev/null 2>"$error_file" || true
+    sleep 0.5
+    if ! grep -Fq 'Error creating terminal' "$error_file"; then
+      rm -f "$error_file"
+      return 0
+    fi
+    cat "$error_file" >&2 || true
+  fi
+  rm -f "$error_file"
+  return 1
 }
 
 wait_for_remote_topic() {
@@ -403,6 +424,7 @@ if clicked_waypoints_enabled; then
   printf -v recorder_command '%q ' "${recorder_args[@]}"
   mkdir -p "$(dirname "$CLICKED_WAYPOINTS_FILE")"
   recorder_log="$LOCAL_LOG_DIR/clicked_waypoints.log"
+  : > "$recorder_log"
   terminal_body=$(cat <<EOF
 set -o pipefail
 ${recorder_command% } 2>&1 | tee $(printf '%q' "$recorder_log")
@@ -412,7 +434,10 @@ read -r _
 exit "\$status"
 EOF
 )
-  open_local_terminal "SCAN Publish Point Recorder" "$terminal_body"
+  if ! open_local_terminal "SCAN Publish Point Recorder" "$terminal_body"; then
+    printf '警告: 无法打开记录器终端，改为后台记录；本次无法用 s/q 手动保存。\n' >&2
+    start_local clicked_waypoints "${recorder_command% } --no-keyboard"
+  fi
   wait_for_local_log "$recorder_log" \
     "Click waypoints on /clicked_point" 15 || {
     tail -n 80 "$recorder_log" >&2 2>/dev/null || true
