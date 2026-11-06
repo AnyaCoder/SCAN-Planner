@@ -3,6 +3,8 @@ set -Eeuo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 STOP_SCRIPT="$SCRIPT_DIR/stop_scan_stack.sh"
+# shellcheck source=tools/stack_lib.sh
+source "$SCRIPT_DIR/stack_lib.sh"
 
 GO2_HOST=${GO2_HOST:-go2-wifi}
 REMOTE_HOME=${SCAN_REMOTE_HOME:-/home/unitree}
@@ -34,6 +36,8 @@ die() {
   printf '错误: %s\n' "$*" >&2
   exit 1
 }
+
+front_camera_defaults || die "SCAN_CAMERA_ENABLE 只能是 1/0: $CAMERA_ENABLE"
 
 cleanup_on_exit() {
   local rc=$?
@@ -183,19 +187,6 @@ EOF
   remote_run "$body"
 }
 
-wait_for_local_topic() {
-  local topic=$1
-  local timeout_s=$2
-  local deadline=$((SECONDS + timeout_s))
-  while (( SECONDS < deadline )); do
-    if timeout 4 ros2 topic list --no-daemon --spin-time 1 2>/dev/null | grep -Fxq -- "$topic"; then
-      return 0
-    fi
-    sleep 1
-  done
-  return 1
-}
-
 wait_for_local_log() {
   local log=$1
   local needle=$2
@@ -232,7 +223,8 @@ EOF
 }
 
 local_rviz_running() {
-  pgrep -f 'rviz2 .*default.*\.rviz|ros2 launch scan_planner rviz\.launch\.py|scan_wifi_bridge\.py --client|clicked_waypoint_recorder\.py' >/dev/null 2>&1
+  pgrep -f 'rviz2 .*default.*\.rviz|ros2 launch scan_planner rviz\.launch\.py|scan_wifi_bridge\.py --client|clicked_waypoint_recorder\.py' >/dev/null 2>&1 || \
+    front_camera_relay_running || front_camera_decoder_running
 }
 
 clicked_waypoints_enabled() {
@@ -331,6 +323,9 @@ navi_mode=1 时默认在独立终端打开 Publish Point 路径点记录器，�
   SCAN_CLICKED_WAYPOINTS_FILE=...      默认 foxy_ws/maps/clicked_waypoints.yaml
   SCAN_CLICKED_WAYPOINTS_Z=0.4         点击点未到达前使用的固定高度
   SCAN_CLICKED_WAYPOINTS_DRIVE=1       默认点选后发布导航目标；0 表示只记录
+  SCAN_CAMERA_ENABLE=1                 1/0，默认把 Go2 前置相机接入 RViz
+  SCAN_CAMERA_URL=...                  默认 http://192.168.76.1:8765/frame.jpg
+  SCAN_CAMERA_FPS=15                   相机显示帧率，约 94 KB/帧
 EOF
       exit 0
       ;;
@@ -406,9 +401,17 @@ start_local wifi_bridge \
   "$LOCAL_PYTHON_EXECUTABLE $SCRIPT_DIR/scan_wifi_bridge.py --client --host $GO2_WIFI_HOST --port 9000"
 wait_for_local_log "$LOCAL_LOG_DIR/wifi_bridge.log" "Wi-Fi clock offset" 25 || \
   { tail -n 80 "$LOCAL_LOG_DIR/wifi_bridge.log" >&2 2>/dev/null || true; die "工作站 TCP 桥未连上 Go2"; }
-wait_for_local_topic /tf 25 || die "本地 TCP 桥未发布 /tf"
-wait_for_local_topic /LIO/clouds_lidar 30 || die "本地 TCP 桥未转发 /LIO/clouds_lidar"
-wait_for_local_topic /grid_map/occupancy 30 || die "本地 TCP 桥未转发 /grid_map/occupancy"
+wait_local_topic /tf 25 || die "本地 TCP 桥未发布 /tf"
+wait_local_topic /LIO/clouds_lidar 30 || die "本地 TCP 桥未转发 /LIO/clouds_lidar"
+wait_local_topic /grid_map/occupancy 30 || die "本地 TCP 桥未转发 /grid_map/occupancy"
+if (( CAMERA_ENABLED == 1 )); then
+  front_camera_start "$LOCAL_WS" "$LOCAL_PYTHON_EXECUTABLE" "$SCRIPT_DIR" "$LOCAL_LOG_DIR"
+  if wait_local_topic "$CAMERA_TOPIC" 8; then
+    printf '前置相机已接入: %s (%s Hz, 独立进程直连)\n' "$CAMERA_URL" "$CAMERA_FPS"
+  else
+    printf '警告: 前置相机暂未出图，检查 Go2 的 %s\n' "$CAMERA_URL" >&2
+  fi
+fi
 
 printf '\n[7/8] 打开 Publish Point 路径点记录器终端\n'
 if clicked_waypoints_enabled; then

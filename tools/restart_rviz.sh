@@ -2,6 +2,8 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=tools/stack_lib.sh
+source "$SCRIPT_DIR/stack_lib.sh"
 LOCAL_WS=${SCAN_LOCAL_WS:-$(cd -- "$SCRIPT_DIR/.." && pwd)}
 LOCAL_LOG_DIR=${SCAN_LOCAL_LOG_DIR:-/tmp/scan_planner_local_logs}
 LOCAL_DDS_CONFIG=${SCAN_LOCAL_DDS_CONFIG:-$HOME/.config/ros2/cyclonedds.xml}
@@ -15,38 +17,7 @@ die() {
   exit 1
 }
 
-stop_local_pgids() {
-  local label=$1
-  local pattern=$2
-  local ownpg
-  ownpg=$(ps -o pgid= -p "$$" | tr -d ' ')
-  local pgids=()
-
-  mapfile -t pgids < <(
-    ps -eo pid=,pgid=,args= | awk \
-      -v own="$$" \
-      -v ownpg="$ownpg" \
-      -v pattern="$pattern" \
-      '$1 != own && $2 != ownpg && $0 ~ pattern {print $2}' | sort -u
-  )
-
-  if ((${#pgids[@]} == 0)); then
-    return 0
-  fi
-
-  printf '停止 %s: PGID %s\n' "$label" "${pgids[*]}"
-  local pgid
-  for pgid in "${pgids[@]}"; do
-    kill -TERM -- "-$pgid" 2>/dev/null || true
-  done
-  sleep 1
-  for pgid in "${pgids[@]}"; do
-    if kill -0 -- "-$pgid" 2>/dev/null; then
-      printf '  %s 未退出，发送 SIGKILL\n' "$label"
-      kill -KILL -- "-$pgid" 2>/dev/null || true
-    fi
-  done
-}
+front_camera_defaults || die "SCAN_CAMERA_ENABLE 只能是 1/0: $CAMERA_ENABLE"
 
 bridge_running() {
   pgrep -f 'scan_wifi_bridge\.py --client' >/dev/null 2>&1
@@ -64,19 +35,6 @@ wait_bridge_connected() {
   local deadline=$((SECONDS + 20))
   while (( SECONDS < deadline )); do
     if [[ -f "$BRIDGE_LOG" ]] && grep -Fq 'Wi-Fi clock offset' "$BRIDGE_LOG"; then
-      return 0
-    fi
-    sleep 1
-  done
-  return 1
-}
-
-wait_local_topic() {
-  local topic=$1
-  local timeout_s=$2
-  local deadline=$((SECONDS + timeout_s))
-  while (( SECONDS < deadline )); do
-    if timeout 4 ros2 topic list --no-daemon --spin-time 1 2>/dev/null | grep -Fxq -- "$topic"; then
       return 0
     fi
     sleep 1
@@ -131,7 +89,7 @@ ros2 daemon stop >/dev/null 2>&1 || true
 [[ -f "$LOCAL_WS/install/scan_planner/share/scan_planner/rviz/default_real.rviz" ]] || \
   die "缺少 default_real.rviz，请先编译 scan_planner"
 
-stop_local_pgids "旧 RViz" 'rviz2 .*default.*\.rviz|ros2 launch scan_planner rviz\.launch\.py'
+stop_local_pgids "旧 RViz" 'rviz2 .*default.*\.rviz|ros2 launch scan_planner rviz\.launch\.py' quiet
 
 if ! bridge_running; then
   start_bridge
@@ -146,6 +104,10 @@ if ! flow_ready; then
     die "本地 TCP 客户端未连上 Go2 的 $GO2_WIFI_HOST:$BRIDGE_PORT"
   }
   flow_ready || die "本地 TCP 客户端已连接，但数据流仍未恢复"
+fi
+
+if (( CAMERA_ENABLED == 1 )); then
+  front_camera_start "$LOCAL_WS" "$PYTHON_EXECUTABLE" "$SCRIPT_DIR" "$LOCAL_LOG_DIR"
 fi
 
 printf 'TCP 客户端已就绪，打开 RViz。\n'

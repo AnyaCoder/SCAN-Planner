@@ -2,6 +2,9 @@
 set -uo pipefail
 
 GO2_HOST=${GO2_HOST:-go2-wifi}
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=tools/stack_lib.sh
+source "$SCRIPT_DIR/stack_lib.sh"
 
 remote_stop_group() {
   local name=$1
@@ -67,40 +70,6 @@ REMOTE
   ssh "$GO2_HOST" bash -s <<<"$script"
 }
 
-stop_local_pgids() {
-  local label=$1
-  local pattern=$2
-  local ownpg
-  ownpg=$(ps -o pgid= -p "$$" | tr -d ' ')
-  local pgids=()
-
-  mapfile -t pgids < <(
-    ps -eo pid=,pgid=,args= | awk \
-      -v own="$$" \
-      -v ownpg="$ownpg" \
-      -v pattern="$pattern" \
-      '$1 != own && $2 != ownpg && $0 ~ pattern {print $2}' | sort -u
-  )
-
-  if ((${#pgids[@]} == 0)); then
-    printf '  %s: 无运行进程\n' "$label"
-    return 0
-  fi
-
-  printf '  %s: PGID %s\n' "$label" "${pgids[*]}"
-  local pgid
-  for pgid in "${pgids[@]}"; do
-    kill -TERM -- "-$pgid" 2>/dev/null || true
-  done
-  sleep 1
-  for pgid in "${pgids[@]}"; do
-    if kill -0 -- "-$pgid" 2>/dev/null; then
-      printf '  %s: PGID %s 未退出，发送 SIGKILL\n' "$label" "$pgid"
-      kill -KILL -- "-$pgid" 2>/dev/null || true
-    fi
-  done
-}
-
 printf '停止工作站 RViz...\n'
 stop_local_pgids "RViz" 'rviz2 .*default.*\.rviz|ros2 launch scan_planner rviz\.launch\.py'
 
@@ -109,6 +78,9 @@ stop_local_pgids "Publish Point recorder" 'clicked_waypoint_recorder\.py'
 
 printf '停止工作站 TCP 状态桥...\n'
 stop_local_pgids "Wi-Fi TCP client" 'scan_wifi_bridge\.py --client'
+
+printf '停止工作站前置相机...\n'
+front_camera_stop
 
 printf '停止 Go2 服务...\n'
 if ! ssh -o ConnectTimeout=5 "$GO2_HOST" true; then
