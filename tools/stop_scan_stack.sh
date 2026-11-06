@@ -3,6 +3,11 @@ set -uo pipefail
 
 GO2_HOST=${GO2_HOST:-go2-wifi}
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+REMOTE_HOME=${SCAN_REMOTE_HOME:-/home/unitree}
+REMOTE_ROOT=${SCAN_REMOTE_ROOT:-$REMOTE_HOME/SCAN-Planner}
+REMOTE_GRAPH_WS=${SCAN_REMOTE_GRAPH_WS:-/unitree/module/graph_pid_ws}
+REMOTE_FASTLIO_WS=${SCAN_REMOTE_FASTLIO_WS:-$REMOTE_HOME/fastlio_ws}
+REMOTE_DDS_CONFIG=${SCAN_REMOTE_DDS_CONFIG:-$REMOTE_HOME/.config/ros2/cyclonedds.xml}
 # shellcheck source=tools/stack_lib.sh
 source "$SCRIPT_DIR/stack_lib.sh"
 
@@ -50,20 +55,20 @@ REMOTE
 
 remote_save_map() {
   local script
-  script=$(cat <<'REMOTE'
+  script=$(cat <<REMOTE
 set +u
 source /opt/ros/foxy/setup.bash
-source /unitree/module/graph_pid_ws/install/local_setup.bash 2>/dev/null || true
-source /home/unitree/fastlio_ws/install/local_setup.bash 2>/dev/null || true
-source /home/unitree/SCAN-Planner/install/local_setup.bash 2>/dev/null || true
+source "$REMOTE_GRAPH_WS/install/local_setup.bash" 2>/dev/null || true
+source "$REMOTE_FASTLIO_WS/install/local_setup.bash" 2>/dev/null || true
+source "$REMOTE_ROOT/install/local_setup.bash" 2>/dev/null || true
 set -u
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-export CYCLONEDDS_URI=file:///home/unitree/.config/ros2/cyclonedds.xml
-export LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH:-}
+export CYCLONEDDS_URI=file://$REMOTE_DDS_CONFIG
+export LD_LIBRARY_PATH=/usr/local/lib:\${LD_LIBRARY_PATH:-}
 if ! pgrep -f 'fastlio_mapping|fast_lio mapping\.launch\.py' >/dev/null 2>&1; then
   exit 0
 fi
-mkdir -p /home/unitree/SCAN-Planner/maps
+mkdir -p "$REMOTE_ROOT/maps"
 timeout 60 ros2 service call /map_save std_srvs/srv/Trigger {}
 REMOTE
 )
@@ -108,7 +113,8 @@ remote_stop_group "Livox driver" \
 
 # 清掉可能仍挂着的本地 SSH 启动包装进程，不匹配普通交互式 SSH。
 printf '清理工作站 SSH 启动包装...\n'
-stop_local_pgids "SSH launcher" \
-  '^ssh .*go2-wifi .*(scan_planner|lio_bridge|fast_lio|fastlio|livox_ros_driver2)'
+go2_host_pattern=$(printf '%s' "$GO2_HOST" | sed 's/\./\\./g')
+ssh_pattern="^ssh .*${go2_host_pattern} .*(scan_planner|lio_bridge|fast_lio|fastlio|livox_ros_driver2)"
+stop_local_pgids "SSH launcher" "$ssh_pattern"
 
 printf '清理完成。\n'

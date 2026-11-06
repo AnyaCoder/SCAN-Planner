@@ -3,6 +3,7 @@ set -euo pipefail
 
 WS="${1:-$HOME/fastlio_ws}"
 SRC="$WS/src/FAST_LIO"
+GRAPH_WS="${SCAN_REMOTE_GRAPH_WS:-/unitree/module/graph_pid_ws}"
 PATCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches"
 PATCHES=(
   "$PATCH_DIR/fast_lio_foxy_service_callback.patch"
@@ -21,9 +22,9 @@ fi
 
 # shellcheck disable=SC1091
 source /opt/ros/foxy/setup.bash
-if [[ -f /unitree/module/graph_pid_ws/install/local_setup.bash ]]; then
-  # shellcheck disable=SC1091
-  source /unitree/module/graph_pid_ws/install/local_setup.bash
+if [[ -f "$GRAPH_WS/install/local_setup.bash" ]]; then
+  # shellcheck disable=SC1090,SC1091
+  source "$GRAPH_WS/install/local_setup.bash"
 fi
 
 mkdir -p "$WS/src"

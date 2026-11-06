@@ -5,13 +5,18 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 WS=${SCAN_LOCAL_WS:-$(cd -- "$SCRIPT_DIR/.." && pwd)}
 GO2_HOST=${GO2_HOST:-go2-wifi}
 GO2_WIFI_HOST=${GO2_WIFI_HOST:-192.168.76.1}
-REMOTE_ROOT=${SCAN_REMOTE_ROOT:-/home/unitree/SCAN-Planner}
-REMOTE_MAP=$REMOTE_ROOT/maps/relocalization_map.pcd
-REMOTE_WAYPOINTS=$REMOTE_ROOT/maps/clicked_waypoints.yaml
-REMOTE_LOG_DIR=/tmp/relocalization_logs
-LOCAL_LOG_DIR=/tmp/relocalization_logs_local
+REMOTE_HOME=${SCAN_REMOTE_HOME:-/home/unitree}
+REMOTE_ROOT=${SCAN_REMOTE_ROOT:-$REMOTE_HOME/SCAN-Planner}
+REMOTE_GRAPH_WS=${SCAN_REMOTE_GRAPH_WS:-/unitree/module/graph_pid_ws}
+REMOTE_FASTLIO_WS=${SCAN_REMOTE_FASTLIO_WS:-$REMOTE_HOME/fastlio_ws}
+REMOTE_AUTONOMY_WS=${SCAN_REMOTE_AUTONOMY_WS:-$REMOTE_HOME/autonomy_stack_go2}
+REMOTE_MAP=${REMOTE_MAP:-$REMOTE_ROOT/maps/relocalization_map.pcd}
+REMOTE_WAYPOINTS=${REMOTE_WAYPOINTS:-$REMOTE_ROOT/maps/clicked_waypoints.yaml}
+REMOTE_LOG_DIR=${SCAN_REMOTE_LOG_DIR:-/tmp/relocalization_logs}
+LOCAL_LOG_DIR=${SCAN_LOCAL_LOG_DIR:-/tmp/relocalization_logs_local}
 LOCAL_DDS_CONFIG=${SCAN_LOCAL_DDS_CONFIG:-$HOME/.config/ros2/cyclonedds.xml}
-REMOTE_DDS_CONFIG=/home/unitree/.config/ros2/cyclonedds.xml
+REMOTE_DDS_CONFIG=${SCAN_REMOTE_DDS_CONFIG:-$REMOTE_HOME/.config/ros2/cyclonedds.xml}
+BRIDGE_PORT=${SCAN_BRIDGE_PORT:-9000}
 RELOC_TIMEOUT=${SCAN_RELOCALIZATION_TIMEOUT:-180}
 NAVI_MODE=${SCAN_NAVI_MODE:-2}
 RVIZ_CONFIG=$WS/install/map_relocalizer/share/map_relocalizer/rviz/relocalization.rviz
@@ -127,6 +132,8 @@ REMOTE
 }
 
 start_remote_chain() {
+  ssh "$GO2_HOST" \
+    "mkdir -p $(printf '%q' "$REMOTE_ROOT/maps") $(printf '%q' "$REMOTE_ROOT/tools")"
   scp -q "$MAP_FILE" "$GO2_HOST:$REMOTE_MAP"
   scp -q "$WAYPOINTS_FILE" "$GO2_HOST:$REMOTE_WAYPOINTS"
   scp -q "$SCRIPT_DIR/scan_wifi_bridge.py" "$GO2_HOST:$REMOTE_ROOT/tools/scan_wifi_bridge.py"
@@ -134,26 +141,26 @@ start_remote_chain() {
   ssh "$GO2_HOST" 'bash -s' <<REMOTE
 set +u
 source /opt/ros/foxy/setup.bash
-source /unitree/module/graph_pid_ws/install/local_setup.bash
-source /home/unitree/fastlio_ws/install/local_setup.bash
-source /home/unitree/autonomy_stack_go2/install/local_setup.bash
-source /home/unitree/SCAN-Planner/install/local_setup.bash
+source "$REMOTE_GRAPH_WS/install/local_setup.bash"
+source "$REMOTE_FASTLIO_WS/install/local_setup.bash"
+source "$REMOTE_AUTONOMY_WS/install/local_setup.bash"
+source "$REMOTE_ROOT/install/local_setup.bash"
 set -u
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 export CYCLONEDDS_URI=file://$REMOTE_DDS_CONFIG
 export LD_LIBRARY_PATH=/usr/local/lib:\${LD_LIBRARY_PATH:-}
 mkdir -p "$REMOTE_LOG_DIR"
-setsid -f bash -c "cd /unitree/module/graph_pid_ws && exec ros2 launch livox_ros_driver2 msg_MID360_launch.py" >"$REMOTE_LOG_DIR/livox.log" 2>&1 </dev/null
+setsid -f bash -c "cd $REMOTE_GRAPH_WS && exec ros2 launch livox_ros_driver2 msg_MID360_launch.py" >"$REMOTE_LOG_DIR/livox.log" 2>&1 </dev/null
 setsid -f bash -c "cd $REMOTE_ROOT && exec ros2 launch fast_lio mapping.launch.py rviz:=false config_path:=$REMOTE_ROOT/src/planner/lio_bridge/config config_file:=mid360_fastlio.yaml tf_topic:=/fastlio/tf" >"$REMOTE_LOG_DIR/fastlio.log" 2>&1 </dev/null
 setsid -f bash -c "cd $REMOTE_ROOT && exec ros2 launch lio_bridge fastlio_bridge.launch.py output_frame_id:=fastlio_world" >"$REMOTE_LOG_DIR/lio_bridge.log" 2>&1 </dev/null
 setsid -f bash -c "cd $REMOTE_ROOT && exec ros2 launch map_relocalizer map_relocalizer.launch.py prior_map_file:=$REMOTE_MAP rviz:=false" >"$REMOTE_LOG_DIR/map_relocalizer.log" 2>&1 </dev/null
-setsid -f bash -c "cd $REMOTE_ROOT && exec $REMOTE_PYTHON_EXECUTABLE tools/scan_wifi_bridge.py --server --bind 0.0.0.0 --port 9000" >"$REMOTE_LOG_DIR/wifi_bridge.log" 2>&1 </dev/null
+setsid -f bash -c "cd $REMOTE_ROOT && exec $REMOTE_PYTHON_EXECUTABLE tools/scan_wifi_bridge.py --server --bind 0.0.0.0 --port $BRIDGE_PORT" >"$REMOTE_LOG_DIR/wifi_bridge.log" 2>&1 </dev/null
 REMOTE
 }
 
 start_local_bridge() {
   mkdir -p "$LOCAL_LOG_DIR"
-  setsid -f bash -c "cd '$WS' && exec '$PYTHON_EXECUTABLE' tools/scan_wifi_bridge.py --client --host '$GO2_WIFI_HOST' --port 9000" \
+  setsid -f bash -c "cd '$WS' && exec '$PYTHON_EXECUTABLE' tools/scan_wifi_bridge.py --client --host '$GO2_WIFI_HOST' --port '$BRIDGE_PORT'" \
     >"$LOCAL_LOG_DIR/wifi_bridge.log" 2>&1 </dev/null
 }
 
@@ -216,16 +223,17 @@ wait_for_converged() {
 }
 
 start_replay_nodes() {
+  ssh "$GO2_HOST" "mkdir -p $(printf '%q' "$REMOTE_ROOT/tools")"
   scp -q "$SCRIPT_DIR/publish_unitree_joint_states.py" \
     "$GO2_HOST:$REMOTE_ROOT/tools/publish_unitree_joint_states.py"
   # shellcheck disable=SC2087
   ssh "$GO2_HOST" 'bash -s' <<REMOTE
 set +u
 source /opt/ros/foxy/setup.bash
-source /unitree/module/graph_pid_ws/install/local_setup.bash
-source /home/unitree/fastlio_ws/install/local_setup.bash
-source /home/unitree/autonomy_stack_go2/install/local_setup.bash
-source /home/unitree/SCAN-Planner/install/local_setup.bash
+source "$REMOTE_GRAPH_WS/install/local_setup.bash"
+source "$REMOTE_FASTLIO_WS/install/local_setup.bash"
+source "$REMOTE_AUTONOMY_WS/install/local_setup.bash"
+source "$REMOTE_ROOT/install/local_setup.bash"
 set -u
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 export CYCLONEDDS_URI=file://$REMOTE_DDS_CONFIG

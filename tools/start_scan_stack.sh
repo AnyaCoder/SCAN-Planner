@@ -27,6 +27,7 @@ LOCAL_DDS_CONFIG=${SCAN_LOCAL_DDS_CONFIG:-$HOME/.config/ros2/cyclonedds.xml}
 REMOTE_DDS_CONFIG=${SCAN_REMOTE_DDS_CONFIG:-$REMOTE_HOME/.config/ros2/cyclonedds.xml}
 LOCAL_PYTHON_EXECUTABLE=${SCAN_PYTHON:-/usr/bin/python3}
 REMOTE_PYTHON_EXECUTABLE=${SCAN_REMOTE_PYTHON:-/usr/bin/python3}
+BRIDGE_PORT=${SCAN_BRIDGE_PORT:-9000}
 
 export ROS_DOMAIN_ID
 
@@ -263,8 +264,8 @@ check_dds_config() {
     die "Go2 DDS 配置必须只绑定 eth0: $REMOTE_DDS_CONFIG"
   fi
 
-  printf 'DDS: Go2 eth0 <-> 工作站 lo；TCP 桥经 Wi-Fi %s (%s) -> %s:9000\n' \
-    "$local_iface" "$local_ip" "$GO2_WIFI_HOST"
+  printf 'DDS: Go2 eth0 <-> 工作站 lo；TCP 桥经 Wi-Fi %s (%s) -> %s:%s\n' \
+    "$local_iface" "$local_ip" "$GO2_WIFI_HOST" "$BRIDGE_PORT"
   if command -v iw >/dev/null 2>&1 && iw dev "$local_iface" get power_save 2>/dev/null | grep -q on; then
     printf '警告: %s 开启了 Wi-Fi 省电，TCP 延迟会抖动。建议:\n' "$local_iface" >&2
     printf '  nmcli connection modify <Go2连接名> 802-11-wireless.powersave 2 && nmcli connection up <Go2连接名>\n' >&2
@@ -313,7 +314,7 @@ for arg in "$@"; do
 用法: start_scan_stack.sh [--restart]
 
 在工作站运行。Go2 的 ROS/DDS 只走 eth0，工作站的 ROS/DDS 只走 lo；
-跨机可视化状态和 RViz 目标只通过 Wi-Fi 上的 TCP 9000 桥传输。
+跨机可视化状态和 RViz 目标只通过 Wi-Fi 上的 TCP 桥传输（默认 9000）。
 默认拒绝覆盖已运行的服务；使用 --restart 会先清理两端服务和旧 Wi-Fi relay。
 navi_mode=1 时默认在独立终端打开 Publish Point 路径点记录器，按 s/q 手动保存。
 本脚本不发送 1003 StopMove；停车使用遥控器或 StopMove。
@@ -326,6 +327,9 @@ navi_mode=1 时默认在独立终端打开 Publish Point 路径点记录器，�
   SCAN_CAMERA_ENABLE=1                 1/0，默认把 Go2 前置相机接入 RViz
   SCAN_CAMERA_URL=...                  默认 http://192.168.76.1:8765/frame.jpg
   SCAN_CAMERA_FPS=15                   相机显示帧率，约 94 KB/帧
+  SCAN_LOCAL_WS=...                    本地仓库根目录，默认从脚本位置推导
+  SCAN_REMOTE_ROOT=...                 Go2 部署目录，默认 /home/unitree/SCAN-Planner
+  SCAN_BRIDGE_PORT=9000                工作站与 Go2 的 TCP 桥端口
 EOF
       exit 0
       ;;
@@ -339,6 +343,8 @@ command -v ssh >/dev/null 2>&1 || die "找不到 ssh"
 ssh -o ConnectTimeout=5 "$GO2_HOST" true || die "无法 SSH 连接 $GO2_HOST"
 check_dds_config
 remote_run "ros2 daemon stop >/dev/null 2>&1 || true"
+ssh "$GO2_HOST" \
+  "mkdir -p $(printf '%q' "$REMOTE_ROOT/tools") $(printf '%q' "$REMOTE_ROOT/maps")"
 
 if (( restart == 1 )); then
   printf '重启模式：无条件先停止两端已有服务...\n'
@@ -394,11 +400,11 @@ wait_for_remote_node /cmd_vel_sport_bridge 25 || \
 
 printf '[6/8] 启动 Wi-Fi TCP 状态桥\n'
 start_remote wifi_bridge "$REMOTE_ROOT" \
-  "$REMOTE_PYTHON_EXECUTABLE $REMOTE_ROOT/tools/scan_wifi_bridge.py --server --bind 0.0.0.0 --port 9000"
+  "$REMOTE_PYTHON_EXECUTABLE $REMOTE_ROOT/tools/scan_wifi_bridge.py --server --bind 0.0.0.0 --port $BRIDGE_PORT"
 wait_for_remote_log "$REMOTE_LOG_DIR/wifi_bridge.log" "listening on" 25 || \
-  { show_remote_log "$REMOTE_LOG_DIR/wifi_bridge.log"; die "Go2 TCP 桥未开始监听 9000"; }
+  { show_remote_log "$REMOTE_LOG_DIR/wifi_bridge.log"; die "Go2 TCP 桥未开始监听 $BRIDGE_PORT"; }
 start_local wifi_bridge \
-  "$LOCAL_PYTHON_EXECUTABLE $SCRIPT_DIR/scan_wifi_bridge.py --client --host $GO2_WIFI_HOST --port 9000"
+  "$LOCAL_PYTHON_EXECUTABLE $SCRIPT_DIR/scan_wifi_bridge.py --client --host $GO2_WIFI_HOST --port $BRIDGE_PORT"
 wait_for_local_log "$LOCAL_LOG_DIR/wifi_bridge.log" "Wi-Fi clock offset" 25 || \
   { tail -n 80 "$LOCAL_LOG_DIR/wifi_bridge.log" >&2 2>/dev/null || true; die "工作站 TCP 桥未连上 Go2"; }
 wait_local_topic /tf 25 || die "本地 TCP 桥未发布 /tf"
