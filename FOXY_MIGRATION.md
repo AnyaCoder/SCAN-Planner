@@ -26,7 +26,7 @@ backported to Ubuntu 20.04 / ROS 2 Foxy for the Go2 onboard computer.
 ## Build
 
 ```bash
-cd ~/SCAN-Planner/foxy_ws
+cd "$(git rev-parse --show-toplevel)"
 source /opt/ros/foxy/setup.bash
 sudo apt install libarmadillo-dev libeigen3-dev libglm-dev \
   libglew-dev libglfw3-dev libgl1-mesa-dev libglu1-mesa-dev \

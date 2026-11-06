@@ -14,7 +14,7 @@ REMOTE_FASTLIO_WS=${SCAN_REMOTE_FASTLIO_WS:-$REMOTE_HOME/fastlio_ws}
 REMOTE_AUTONOMY_WS=${SCAN_REMOTE_AUTONOMY_WS:-$REMOTE_HOME/autonomy_stack_go2}
 REMOTE_LOG_DIR=${SCAN_REMOTE_LOG_DIR:-/tmp/scan_planner_logs}
 LOCAL_LOG_DIR=${SCAN_LOCAL_LOG_DIR:-/tmp/scan_planner_local_logs}
-LOCAL_WS=${SCAN_LOCAL_WS:-$HOME/SCAN-Planner/foxy_ws}
+LOCAL_WS=${SCAN_LOCAL_WS:-$(cd -- "$SCRIPT_DIR/.." && pwd)}
 ROS_DOMAIN_ID=${SCAN_ROS_DOMAIN_ID:-0}
 NAVI_MODE=${SCAN_NAVI_MODE:-1}
 KEYPOINTS_FILE=${SCAN_KEYPOINTS_FILE:-}
@@ -320,7 +320,7 @@ navi_mode=1 时默认在独立终端打开 Publish Point 路径点记录器，�
 
 环境变量:
   SCAN_CLICKED_WAYPOINTS_ENABLE=auto   auto/1/0，默认仅 navi_mode=1 启用
-  SCAN_CLICKED_WAYPOINTS_FILE=...      默认 foxy_ws/maps/clicked_waypoints.yaml
+  SCAN_CLICKED_WAYPOINTS_FILE=...      默认 <repo>/maps/clicked_waypoints.yaml
   SCAN_CLICKED_WAYPOINTS_Z=0.4         点击点未到达前使用的固定高度
   SCAN_CLICKED_WAYPOINTS_DRIVE=1       默认点选后发布导航目标；0 表示只记录
   SCAN_CAMERA_ENABLE=1                 1/0，默认把 Go2 前置相机接入 RViz

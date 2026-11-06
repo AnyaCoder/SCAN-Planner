@@ -121,7 +121,7 @@ stale. It never stops Go2 algorithms or the speed bridge.
 
 `start_scan_stack.sh` starts `clicked_waypoint_recorder.py` automatically in
 `navi_mode=1` in a separate terminal. It records RViz `Publish Point` clicks as
-numbered waypoints and writes `foxy_ws/maps/clicked_waypoints.yaml` by default.
+numbered waypoints and writes `maps/clicked_waypoints.yaml` by default.
 Nothing is saved until you press `s` or `q` in that terminal. Its log is
 `/tmp/scan_planner_local_logs/clicked_waypoints.log`.
 The automatic recorder publishes every click to `/move_base_simple/goal`, so
@@ -132,7 +132,7 @@ To run the recorder manually instead:
 
 ```bash
 ros2 run scan_planner clicked_waypoint_recorder.py \
-  --output ~/SCAN-Planner/foxy_ws/maps/clicked_waypoints.yaml \
+  --output maps/clicked_waypoints.yaml \
   --z 0.4
 ```
 
@@ -154,7 +154,7 @@ SCAN `navi_mode=1` and the speed bridge enabled:
 ```bash
 ros2 run scan_planner clicked_waypoint_recorder.py \
   --drive \
-  --output ~/SCAN-Planner/foxy_ws/maps/clicked_waypoints.yaml \
+  --output maps/clicked_waypoints.yaml \
   --z 0.4
 ```
 

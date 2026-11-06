@@ -72,7 +72,7 @@ source install/setup.bash
 ros2 launch scan_planner run.launch.py \
   is_real_world:=false navi_mode:=1 sensor_type:=lidar \
   controller_mode:=closed_loop use_gpu:=false \
-  use_pcd_map:=true pcd_map_file:=$HOME/SCAN-Planner/foxy_ws/map.pcd
+  use_pcd_map:=true pcd_map_file:=$PWD/map.pcd
 ```
 
 
@@ -133,7 +133,7 @@ scan_planner_node:
 
 ```bash
 ros2 run scan_planner clicked_waypoint_recorder.py \
-  --output ~/SCAN-Planner/foxy_ws/maps/clicked_waypoints.yaml \
+  --output maps/clicked_waypoints.yaml \
   --z 0.4
 ```
 

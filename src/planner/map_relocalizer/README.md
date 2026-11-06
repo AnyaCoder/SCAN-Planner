@@ -26,7 +26,7 @@ SCAN-Planner
 ## Build
 
 ```bash
-cd ~/SCAN-Planner/foxy_ws
+cd "$(git rev-parse --show-toplevel)"
 source /opt/ros/foxy/setup.bash
 colcon build --symlink-install --packages-select map_relocalizer scan_planner \
   --cmake-args -DCMAKE_BUILD_TYPE=Release
@@ -37,7 +37,7 @@ colcon build --symlink-install --packages-select map_relocalizer scan_planner \
 Run this while the recording FAST-LIO/SCAN session is still alive:
 
 ```bash
-cd ~/SCAN-Planner/foxy_ws
+cd "$(git rev-parse --show-toplevel)"
 ./tools/save_relocalization_bundle.sh \
   maps/clicked_waypoints.yaml
 ```

@@ -8,6 +8,12 @@ import numpy as np
 import yaml
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_BRIDGE_CONFIG = (
+    REPO_ROOT / "src" / "planner" / "lio_bridge" / "config" / "fastlio_bridge.yaml"
+)
+
+
 def read_pcd(path):
     raw = Path(path).read_bytes()
     marker = b"DATA binary\n"
@@ -67,7 +73,7 @@ def main():
     parser.add_argument("output_pcd")
     parser.add_argument(
         "--bridge-config",
-        default="/home/anyacoder/SCAN-Planner/foxy_ws/src/planner/lio_bridge/config/fastlio_bridge.yaml",
+        default=str(DEFAULT_BRIDGE_CONFIG),
     )
     parser.add_argument("--z-min", type=float)
     parser.add_argument("--z-max", type=float)
