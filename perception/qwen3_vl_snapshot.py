@@ -7,6 +7,7 @@ import os
 import time
 import urllib.request
 import warnings
+from pathlib import Path
 
 os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
@@ -17,8 +18,11 @@ from PIL import Image
 from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
 
-DEFAULT_MODEL = "/home/unitree/SCAN-Planner/perception/models/qwen3_vl_2b"
-DEFAULT_IMAGE = "http://127.0.0.1:8765/frame.jpg"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_MODEL = os.environ.get(
+    "SCAN_QWEN3_VL_MODEL", str(REPO_ROOT / "perception" / "models" / "qwen3_vl_2b")
+)
+DEFAULT_IMAGE = os.environ.get("SCAN_CAMERA_URL", "http://127.0.0.1:8765/frame.jpg")
 DEFAULT_PROMPT = (
     "用一句话描述这个室内场景，并指出正前方是否可通行、"
     "最明显的障碍物是什么。"

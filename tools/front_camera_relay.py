@@ -2,6 +2,7 @@
 """Pull the Go2 front-camera JPEG stream and publish a compressed ROS image."""
 
 import argparse
+import os
 import threading
 import time
 from urllib.request import urlopen
@@ -68,7 +69,10 @@ class FrontCameraRelay(Node):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--url", default="http://192.168.76.1:8765/frame.jpg"
+        "--url",
+        default=os.environ.get(
+            "SCAN_CAMERA_URL", "http://192.168.76.1:8765/frame.jpg"
+        ),
     )
     parser.add_argument(
         "--topic", default="/go2/front_camera/image_raw/compressed"
