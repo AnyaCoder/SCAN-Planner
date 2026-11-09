@@ -220,9 +220,68 @@ the robot or passing camera frames through the state bridge. A separate
 `/go2/front_camera/image_raw` for the RViz `Front Camera` display.
 The workstation needs `ros-foxy-compressed-image-transport`.
 The Unitree source is 1920x1080; `front_camera_bridge.py` downsamples it to
-1280x720 before JPEG encoding. At the default 15 Hz target this is about
-1.4 MB/s; the current workstation observes 11-13 Hz end to end. Disable it
-with `SCAN_CAMERA_ENABLE=0`; lower the bandwidth with `SCAN_CAMERA_FPS=5`.
+1280x720 before JPEG encoding. The default is 5 Hz, about 0.45 MB/s, matching
+the YOLO detection rate; raise it with `SCAN_CAMERA_FPS=15` if needed. Disable
+the camera with `SCAN_CAMERA_ENABLE=0`.
+
+## YOLO overlay
+
+The detector runs on Go2 and writes a small JSON file. The workstation polls
+that JSON and draws the boxes while decoding the existing camera stream, so no
+second video stream is sent over Wi-Fi. The annotated frames replace the
+`image_transport republish` decoder and still use
+`/go2/front_camera/image_raw`, which means the existing RViz `Front Camera`
+display needs no change.
+
+Build the workstation node once:
+
+```bash
+source /opt/ros/foxy/setup.bash
+colcon build --packages-select scan_planner \
+  --cmake-args -DCMAKE_BUILD_TYPE=Release
+```
+
+Start or stop the overlay without restarting LIO or SCAN:
+
+```bash
+./tools/start_yolo_overlay.sh
+./tools/stop_yolo_overlay.sh
+```
+
+To start it together with the full stack:
+
+```bash
+SCAN_YOLO_ENABLE=1 ./tools/start_scan_stack.sh --restart
+```
+
+Go2 defaults are `perception/yolo_trt/build/yolo_trt` with the fixed-vocabulary
+YOLO-World engine `perception/engines/yolov8s_worldv2_indoor_fp16.engine` and
+the existing camera endpoint `http://127.0.0.1:8765/frame.jpg`. The startup
+script syncs `perception/yolo_world/classes.txt` to Go2 and passes it through
+`--names`, so the labels match the exported vocabulary. Detection JSON is
+exposed on port `8767`;
+port `8766` is already used by `live_robot_state.py`. The detector runs at
+5 Hz (`SCAN_YOLO_INTERVAL=0.2`), while annotated camera frames stay at the
+normal camera rate. On the current workstation the C++ overlay uses about 50%
+of one CPU core with RViz subscribed; the plain `image_transport` decoder uses
+about 27%, so the overlay adds roughly 8 percentage points. Camera output is
+set to 5 Hz to match the detector.
+
+Useful overrides are `SCAN_YOLO_ENGINE`, `SCAN_YOLO_NAMES`,
+`SCAN_YOLO_CLASSES_SOURCE`, `SCAN_YOLO_CONFIDENCE`, `SCAN_YOLO_INTERVAL`,
+`SCAN_YOLO_PORT`, and `SCAN_YOLO_STALE`. Set `SCAN_YOLO_ENGINE` to
+`perception/engines/yolov8n_fp16.engine` to fall back to the old COCO detector;
+omit `SCAN_YOLO_CLASSES_SOURCE` only when the remote `SCAN_YOLO_NAMES` file is
+already present.
+
+The open vocabulary lives in `perception/yolo_world/classes.txt`. Export and
+engine-build commands are in `perception/README.md`.
+
+Logs:
+
+- `/tmp/scan_planner_logs/yolo.log`
+- `/tmp/scan_planner_logs/yolo_http.log`
+- `/tmp/scan_planner_local_logs/yolo_overlay.log`
 
 `restart_rviz.sh` reopens only the workstation RViz window when the Go2 stack
 is still running. It validates `/tf`, `/LIO/clouds_lidar`, and `world -> body`,

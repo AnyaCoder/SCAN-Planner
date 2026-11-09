@@ -78,7 +78,7 @@ def main():
         "--topic", default="/go2/front_camera/image_raw/compressed"
     )
     parser.add_argument("--frame-id", default="go2_front_camera_optical_frame")
-    parser.add_argument("--fps", type=float, default=15.0)
+    parser.add_argument("--fps", type=float, default=5.0)
     args = parser.parse_args()
     if args.fps <= 0.0:
         parser.error("--fps must be positive")

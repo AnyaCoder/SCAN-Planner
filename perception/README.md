@@ -9,20 +9,31 @@ Go2 本机:      http://127.0.0.1:8765/frame.jpg
 工作站访问:    http://192.168.76.1:8765/frame.jpg
 ```
 
-实际输出为 `640x360`、约 `5 Hz` 的 JPEG。服务只调用 `VideoClient.GetImageSample()`，不涉及运动接口。
+实际输出为 `1280x720`、约 `5 Hz` 的 JPEG。服务只调用 `VideoClient.GetImageSample()`，不涉及运动接口。
 
 ## 模型结论
 
 | 模型 | Orin NX 实测 | 用途 |
 |---|---:|---|
 | YOLOv8n FP16 TensorRT | 推理 `10.2 ms`，端到端 `20-27 ms` | 主检测器，5 Hz 实时跑 |
+| YOLO-World S v2 FP16 TensorRT | 推理 `21-27 ms`，端到端 `38-49 ms` | 开放词表室内检测器 |
 | YOLO11n FP16 TensorRT | 推理 `12.4 ms`，端到端 `22-29 ms` | 备选主检测器，官方新版权重 |
 | MobileCLIP2-S0 FP16 TensorRT | 预处理+推理 `19.4 ms` | 主场景语义模型 |
 | CLIP ViT-B/32 FP16 TensorRT | 预处理+推理 `16.1 ms` | 第二意见，交叉复核 |
 | MobileCLIP2-S0 CPU | 256x256 单图约 `0.41 s` | 已移除，仅作为精度基线 |
 | DINOv2-S | 224x224 单图约 `0.32 s` (CPU)，输出 `257x384` 特征 | 更适合做地点识别/检索，不直接给物体标签 |
 
-COCO 80 类不包含门、电梯、楼梯、玻璃墙等导航最需要的类别。当前 YOLO 会出现把白色隔断判成 `refrigerator` 这类误检，CLIP 能参与复核，但不能替代室内语义检测器。
+COCO 80 类不包含门、电梯、楼梯、玻璃墙等导航最需要的类别，也会把垃圾桶
+判成 `suitcase`。YOLO-World 使用固定后的室内词表，运行时不需要 CLIP。
+当前词表在 `perception/yolo_world/classes.txt`，包含 18 类：
+
+```text
+person, chair, desk, table, door, trash can, cabinet, cardboard box,
+cart, traffic cone, bicycle, backpack, suitcase, monitor, couch,
+potted plant, partition, fire extinguisher
+```
+
+现场帧实测：垃圾桶输出为 `trash can 0.52`，不再误报为 `suitcase`。
 
 同一帧上，MobileCLIP2 的 TensorRT 输出与 CPU 基线排序完全一致：
 
@@ -103,6 +114,56 @@ cd /home/unitree/SCAN-Planner/perception
 ```
 
 首次构建在 25W 模式下约需 10-20 分钟。
+
+### YOLO-World 固定词表
+
+导出只在工作站做一次。`set_classes()` 会把 CLIP 文本 embedding 固化进模型，
+生成的 ONNX 只有图像输入，不包含 CLIP 或文本编码器。
+
+```bash
+cd /path/to/SCAN-Planner
+python3 -m venv perception/.venv
+perception/.venv/bin/python -m pip install \
+  torch==2.4.1 torchvision==0.19.1 --index-url https://download.pytorch.org/whl/cpu
+perception/.venv/bin/python -m pip install ultralytics==8.4.0 onnx==1.17.0 onnxslim==0.1.99
+git clone --depth 1 https://github.com/ultralytics/CLIP.git /tmp/ultralytics-clip
+perception/.venv/bin/python -m pip install --no-deps /tmp/ultralytics-clip
+perception/.venv/bin/python -m pip install ftfy regex tqdm
+perception/.venv/bin/python perception/yolo_world/export_onnx.py
+```
+
+输出：
+
+```text
+perception/models/yolo_world/yolov8s_worldv2_indoor.onnx
+perception/models/yolo_world/metadata.json
+```
+
+本机检查结果：
+
+```text
+images:  [1, 3, 640, 640]
+output0: [1, 22, 8400]     # 4 bbox + 18 classes
+```
+
+engine 必须在 Go2 上构建，不能复制工作站 x86 的产物：
+
+```bash
+scp perception/models/yolo_world/yolov8s_worldv2_indoor.onnx \
+  go2-wifi:/home/unitree/SCAN-Planner/perception/models/yolo_world/
+scp perception/yolo_world/classes.txt \
+  go2-wifi:/home/unitree/SCAN-Planner/perception/engines/yolov8s_worldv2_indoor.classes.txt
+
+ssh go2-wifi
+/usr/src/tensorrt/bin/trtexec \
+  --onnx=/home/unitree/SCAN-Planner/perception/models/yolo_world/yolov8s_worldv2_indoor.onnx \
+  --saveEngine=/home/unitree/SCAN-Planner/perception/engines/yolov8s_worldv2_indoor_fp16.engine \
+  --fp16 --workspace=2048
+```
+
+当前 Orin NX 构建约 20 分钟，engine 为 27 MB，TensorRT benchmark 平均
+`21-22 ms`。修改词表后必须重新导出 ONNX、重新构建 engine，并保持
+`classes.txt` 的行顺序与导出时一致。
 
 CLIP engine 的 ONNX 需固定 batch 和图像尺寸：
 

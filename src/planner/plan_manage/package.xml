@@ -12,6 +12,9 @@
   <depend>bspline_opt</depend>
   <depend>eigen</depend>
   <depend>geometry_msgs</depend>
+  <depend>libcurl-dev</depend>
+  <depend>libjsoncpp-dev</depend>
+  <depend>libopencv-dev</depend>
   <depend>nav_msgs</depend>
   <depend>path_searching</depend>
   <depend>plan_env</depend>

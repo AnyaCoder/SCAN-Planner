@@ -22,6 +22,7 @@ SCAN-Planner 是一款面向四足机器人导航的空间碰撞感知局部规�
 source /opt/ros/foxy/setup.bash
 sudo apt install libarmadillo-dev libeigen3-dev libglm-dev \
   libglew-dev libglfw3-dev libgl1-mesa-dev libglu1-mesa-dev \
+  libopencv-dev libcurl4-openssl-dev libjsoncpp-dev \
   ros-foxy-compressed-image-transport
 
 rosdep install --from-paths src --ignore-src -r -y \

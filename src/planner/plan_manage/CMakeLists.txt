@@ -9,9 +9,12 @@ add_compile_options(-Wall -Wextra -Wpedantic)
 find_package(ament_cmake REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 find_package(bspline_opt REQUIRED)
+find_package(CURL REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(jsoncpp REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(OpenCV REQUIRED)
 find_package(path_searching REQUIRED)
 find_package(plan_env REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -37,6 +40,12 @@ target_include_directories(scan_planner_node PRIVATE include)
 ament_target_dependencies(scan_planner_node ${scan_planner_dependencies})
 target_link_libraries(scan_planner_node Eigen3::Eigen)
 
+add_executable(yolo_overlay_node src/yolo_overlay_node.cpp)
+ament_target_dependencies(yolo_overlay_node rclcpp sensor_msgs)
+target_include_directories(yolo_overlay_node PRIVATE ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(yolo_overlay_node
+  CURL::libcurl jsoncpp_lib ${OpenCV_LIBRARIES})
+
 foreach(target open_loop_controller closed_loop_controller go2_kinematic_sim go2_gait_publisher)
   add_executable(${target} src/${target}.cpp)
   target_include_directories(${target} PRIVATE include)
@@ -48,7 +57,7 @@ endforeach()
 
 install(TARGETS
   scan_planner_node open_loop_controller closed_loop_controller
-  go2_kinematic_sim go2_gait_publisher
+  go2_kinematic_sim go2_gait_publisher yolo_overlay_node
   DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME} OPTIONAL)

@@ -84,6 +84,9 @@ stop_local_pgids "Publish Point recorder" 'clicked_waypoint_recorder\.py'
 printf '停止工作站 TCP 状态桥...\n'
 stop_local_pgids "Wi-Fi TCP client" 'scan_wifi_bridge\.py --client'
 
+printf '停止工作站 YOLO 叠框...\n'
+stop_local_pgids "YOLO overlay" 'yolo_overlay_node( |$)'
+
 printf '停止工作站前置相机...\n'
 front_camera_stop
 
@@ -94,6 +97,8 @@ if ! ssh -o ConnectTimeout=5 "$GO2_HOST" true; then
 fi
 
 # 先从可视化开始，再按依赖顺序停止规划、bridge、LIO 和雷达驱动。
+remote_stop_group "YOLO detection server" 'detection_http\.py'
+remote_stop_group "YOLO detector" '[y]olo_trt'
 remote_stop_group "RViz (Go2)" \
   'rviz2 .*default.*\.rviz|ros2 launch scan_planner rviz\.launch\.py'
 remote_stop_group "Wi-Fi TCP server" \

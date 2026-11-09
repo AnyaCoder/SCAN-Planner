@@ -53,7 +53,7 @@ stop_local_pgids() {
 front_camera_defaults() {
   CAMERA_ENABLE=${SCAN_CAMERA_ENABLE:-1}
   CAMERA_URL=${SCAN_CAMERA_URL:-http://${GO2_WIFI_HOST:-192.168.76.1}:8765/frame.jpg}
-  CAMERA_FPS=${SCAN_CAMERA_FPS:-15}
+  CAMERA_FPS=${SCAN_CAMERA_FPS:-5}
   CAMERA_TOPIC=${SCAN_CAMERA_TOPIC:-/go2/front_camera/image_raw}
   CAMERA_COMPRESSED_TOPIC=$CAMERA_TOPIC/compressed
   case "$CAMERA_ENABLE" in
@@ -71,6 +71,10 @@ front_camera_decoder_running() {
   pgrep -f 'image_transport republish' >/dev/null 2>&1
 }
 
+front_camera_overlay_running() {
+  pgrep -f 'yolo_overlay_node( |$)' >/dev/null 2>&1
+}
+
 front_camera_start() {
   local local_ws=$1
   local python=$2
@@ -78,7 +82,7 @@ front_camera_start() {
   local log_dir=$4
   mkdir -p "$log_dir"
 
-  if ! front_camera_decoder_running; then
+  if ! front_camera_decoder_running && ! front_camera_overlay_running; then
     printf '启动相机 C++ 解码...\n'
     setsid -f bash -c \
       "cd $(printf '%q' "$local_ws") && exec ros2 run image_transport republish compressed in/compressed:=$(printf '%q' "$CAMERA_COMPRESSED_TOPIC") raw out:=$(printf '%q' "$CAMERA_TOPIC")" \

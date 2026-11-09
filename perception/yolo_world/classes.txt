@@ -1,0 +1,18 @@
+person
+chair
+desk
+table
+door
+trash can
+cabinet
+cardboard box
+cart
+traffic cone
+bicycle
+backpack
+suitcase
+monitor
+couch
+potted plant
+partition
+fire extinguisher

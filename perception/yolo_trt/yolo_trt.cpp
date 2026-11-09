@@ -6,10 +6,12 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -20,7 +22,6 @@ namespace {
 
 constexpr int kInputWidth = 640;
 constexpr int kInputHeight = 640;
-constexpr int kOutputElements = 84 * 8400;
 constexpr float kDefaultConfidence = 0.25f;
 constexpr float kDefaultNms = 0.45f;
 
@@ -60,6 +61,32 @@ struct Letterbox {
   float pad_x;
   float pad_y;
 };
+
+std::vector<std::string> CocoNames() {
+  return std::vector<std::string>(
+      std::begin(kCocoNames), std::end(kCocoNames));
+}
+
+std::vector<std::string> LoadNames(const std::string& path) {
+  std::ifstream input(path);
+  if (!input) {
+    throw std::runtime_error("Cannot open class names: " + path);
+  }
+  std::vector<std::string> names;
+  std::string line;
+  while (std::getline(input, line)) {
+    if (!line.empty() && line.back() == '\r') {
+      line.pop_back();
+    }
+    if (!line.empty()) {
+      names.push_back(line);
+    }
+  }
+  if (names.empty()) {
+    throw std::runtime_error("Empty class names: " + path);
+  }
+  return names;
+}
 
 size_t WriteString(void* contents, size_t size, size_t count, void* output) {
   const size_t bytes = size * count;
@@ -117,17 +144,19 @@ Letterbox ResizeLetterbox(const cv::Mat& source) {
 std::vector<Detection> DecodeDetections(const std::vector<float>& output,
                                         const Letterbox& letterbox,
                                         const cv::Size& original,
+                                        int anchor_count,
+                                        int class_count,
                                         float confidence_threshold,
                                         float nms_threshold) {
   std::vector<cv::Rect> boxes;
   std::vector<float> scores;
   std::vector<int> class_ids;
 
-  for (int index = 0; index < 8400; ++index) {
+  for (int index = 0; index < anchor_count; ++index) {
     int best_class = 0;
-    float best_score = output[4 * 8400 + index];
-    for (int class_id = 1; class_id < 80; ++class_id) {
-      const float score = output[(4 + class_id) * 8400 + index];
+    float best_score = output[4 * anchor_count + index];
+    for (int class_id = 1; class_id < class_count; ++class_id) {
+      const float score = output[(4 + class_id) * anchor_count + index];
       if (score > best_score) {
         best_score = score;
         best_class = class_id;
@@ -138,9 +167,9 @@ std::vector<Detection> DecodeDetections(const std::vector<float>& output,
     }
 
     const float center_x = output[index];
-    const float center_y = output[8400 + index];
-    const float width = output[2 * 8400 + index];
-    const float height = output[3 * 8400 + index];
+    const float center_y = output[anchor_count + index];
+    const float width = output[2 * anchor_count + index];
+    const float height = output[3 * anchor_count + index];
     const float left =
         (center_x - width * 0.5f - letterbox.pad_x) / letterbox.scale;
     const float top =
@@ -174,7 +203,8 @@ std::vector<Detection> DecodeDetections(const std::vector<float>& output,
   return detections;
 }
 
-void DrawDetections(cv::Mat* image, const std::vector<Detection>& detections) {
+void DrawDetections(cv::Mat* image, const std::vector<Detection>& detections,
+                    const std::vector<std::string>& class_names) {
   static const cv::Scalar colors[] = {
       cv::Scalar(0, 200, 0), cv::Scalar(0, 160, 255), cv::Scalar(255, 80, 80),
       cv::Scalar(80, 80, 255), cv::Scalar(255, 200, 0)};
@@ -183,7 +213,7 @@ void DrawDetections(cv::Mat* image, const std::vector<Detection>& detections) {
     cv::rectangle(*image, detection.box, color, 2);
     char text[128];
     std::snprintf(text, sizeof(text), "%s %.2f",
-                  kCocoNames[detection.class_id], detection.score);
+                  class_names[detection.class_id].c_str(), detection.score);
     int baseline = 0;
     const cv::Size size =
         cv::getTextSize(text, cv::FONT_HERSHEY_SIMPLEX, 0.55, 2, &baseline);
@@ -201,6 +231,7 @@ void DrawDetections(cv::Mat* image, const std::vector<Detection>& detections) {
 
 void WriteJson(const std::string& path,
                const std::vector<Detection>& detections,
+               const std::vector<std::string>& class_names,
                double total_ms) {
   const std::string temporary_path = path + ".tmp";
   std::ofstream output(temporary_path);
@@ -216,7 +247,7 @@ void WriteJson(const std::string& path,
     if (index != 0) {
       output << ',';
     }
-    output << "{\"class\":\"" << kCocoNames[detection.class_id]
+    output << "{\"class\":\"" << class_names[detection.class_id]
            << "\",\"confidence\":" << detection.score << ",\"bbox\":["
            << detection.box.x << ',' << detection.box.y << ','
            << detection.box.width << ',' << detection.box.height << "]}";
@@ -229,8 +260,7 @@ void WriteJson(const std::string& path,
 class YoloEngine {
  public:
   explicit YoloEngine(const std::string& engine_path)
-      : input_bytes_(3 * kInputWidth * kInputHeight * sizeof(float)),
-        output_bytes_(kOutputElements * sizeof(float)) {
+      : input_bytes_(3 * kInputWidth * kInputHeight * sizeof(float)) {
     std::ifstream file(engine_path, std::ios::binary);
     if (!file) {
       throw std::runtime_error("Cannot open engine: " + engine_path);
@@ -261,6 +291,21 @@ class YoloEngine {
     if (input_index_ < 0 || output_index_ < 0) {
       throw std::runtime_error("Unexpected engine bindings");
     }
+
+    const nvinfer1::Dims output_dims =
+        engine_->getBindingDimensions(output_index_);
+    if (output_dims.nbDims != 3 || output_dims.d[0] <= 0 ||
+        output_dims.d[1] <= 4 || output_dims.d[2] <= 0) {
+      throw std::runtime_error("Unexpected output shape");
+    }
+    output_elements_ = 1;
+    for (int dimension = 0; dimension < output_dims.nbDims; ++dimension) {
+      output_elements_ *= static_cast<size_t>(output_dims.d[dimension]);
+    }
+    output_bytes_ = output_elements_ * sizeof(float);
+    class_count_ = output_dims.d[1] - 4;
+    anchor_count_ = output_dims.d[2];
+
     if (cudaStreamCreate(&stream_) != cudaSuccess ||
         cudaMalloc(&device_input_, input_bytes_) != cudaSuccess ||
         cudaMalloc(&device_output_, output_bytes_) != cudaSuccess) {
@@ -284,12 +329,15 @@ class YoloEngine {
     if (!context_->enqueueV2(bindings_, stream_, nullptr)) {
       throw std::runtime_error("TensorRT enqueueV2 failed");
     }
-    std::vector<float> output(kOutputElements);
+    std::vector<float> output(output_elements_);
     cudaMemcpyAsync(output.data(), device_output_, output_bytes_,
                     cudaMemcpyDeviceToHost, stream_);
     cudaStreamSynchronize(stream_);
     return output;
   }
+
+  int class_count() const { return class_count_; }
+  int anchor_count() const { return anchor_count_; }
 
  private:
   Logger logger_;
@@ -303,7 +351,10 @@ class YoloEngine {
   int input_index_ = -1;
   int output_index_ = -1;
   size_t input_bytes_;
-  size_t output_bytes_;
+  size_t output_bytes_ = 0;
+  size_t output_elements_ = 0;
+  int class_count_ = 0;
+  int anchor_count_ = 0;
 };
 
 double ElapsedMs(std::chrono::steady_clock::time_point start) {
@@ -322,6 +373,7 @@ int main(int argc, char** argv) {
       "/home/unitree/SCAN-Planner/perception/data/latest_detected.jpg";
   std::string json_path =
       "/home/unitree/SCAN-Planner/perception/data/latest_detections.json";
+  std::string names_path;
   int frames = 0;
   double interval = 0.2;
   float confidence = kDefaultConfidence;
@@ -336,6 +388,8 @@ int main(int argc, char** argv) {
       image_path = argv[++index];
     } else if (argument == "--json" && index + 1 < argc) {
       json_path = argv[++index];
+    } else if (argument == "--names" && index + 1 < argc) {
+      names_path = argv[++index];
     } else if (argument == "--frames" && index + 1 < argc) {
       frames = std::stoi(argv[++index]);
     } else if (argument == "--interval" && index + 1 < argc) {
@@ -351,6 +405,14 @@ int main(int argc, char** argv) {
   curl_global_init(CURL_GLOBAL_DEFAULT);
   try {
     YoloEngine model(engine_path);
+    const std::vector<std::string> class_names =
+        names_path.empty() ? CocoNames() : LoadNames(names_path);
+    if (static_cast<int>(class_names.size()) != model.class_count()) {
+      throw std::runtime_error(
+          "Class name count does not match engine: " +
+          std::to_string(class_names.size()) + " names, " +
+          std::to_string(model.class_count()) + " classes");
+    }
     int frame_index = 0;
     while (frames <= 0 || frame_index < frames) {
       const auto start = std::chrono::steady_clock::now();
@@ -375,15 +437,16 @@ int main(int argc, char** argv) {
 
       const auto postprocess_start = std::chrono::steady_clock::now();
       const std::vector<Detection> detections =
-          DecodeDetections(output, letterbox, image.size(), confidence,
-                           kDefaultNms);
+          DecodeDetections(output, letterbox, image.size(),
+                           model.anchor_count(), model.class_count(),
+                           confidence, kDefaultNms);
       const double postprocess_ms = ElapsedMs(postprocess_start);
       const double total_ms = ElapsedMs(start);
 
       cv::Mat annotated = image.clone();
-      DrawDetections(&annotated, detections);
+      DrawDetections(&annotated, detections, class_names);
       cv::imwrite(image_path, annotated);
-      WriteJson(json_path, detections, total_ms);
+      WriteJson(json_path, detections, class_names, total_ms);
 
       std::cout << "frame=" << frame_index
                 << " objects=" << detections.size()
@@ -394,7 +457,7 @@ int main(int argc, char** argv) {
                 << " postprocess_ms=" << postprocess_ms
                 << " total_ms=" << total_ms << '\n';
       for (const Detection& detection : detections) {
-        std::cout << "  " << kCocoNames[detection.class_id] << " "
+        std::cout << "  " << class_names[detection.class_id] << " "
                   << detection.score << " [" << detection.box.x << ","
                   << detection.box.y << "," << detection.box.width << ","
                   << detection.box.height << "]\n";

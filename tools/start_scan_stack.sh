@@ -22,6 +22,7 @@ CLICKED_WAYPOINTS_ENABLE=${SCAN_CLICKED_WAYPOINTS_ENABLE:-auto}
 CLICKED_WAYPOINTS_FILE=${SCAN_CLICKED_WAYPOINTS_FILE:-$LOCAL_WS/maps/clicked_waypoints.yaml}
 CLICKED_WAYPOINTS_Z=${SCAN_CLICKED_WAYPOINTS_Z:-0.4}
 CLICKED_WAYPOINTS_DRIVE=${SCAN_CLICKED_WAYPOINTS_DRIVE:-1}
+YOLO_ENABLE=${SCAN_YOLO_ENABLE:-0}
 GO2_WIFI_HOST=${GO2_WIFI_HOST:-192.168.76.1}
 LOCAL_DDS_CONFIG=${SCAN_LOCAL_DDS_CONFIG:-$HOME/.config/ros2/cyclonedds.xml}
 REMOTE_DDS_CONFIG=${SCAN_REMOTE_DDS_CONFIG:-$REMOTE_HOME/.config/ros2/cyclonedds.xml}
@@ -39,6 +40,11 @@ die() {
 }
 
 front_camera_defaults || die "SCAN_CAMERA_ENABLE 只能是 1/0: $CAMERA_ENABLE"
+case "$YOLO_ENABLE" in
+  1|true|on) YOLO_ENABLED=1 ;;
+  0|false|off) YOLO_ENABLED=0 ;;
+  *) die "SCAN_YOLO_ENABLE 只能是 1/0: $YOLO_ENABLE" ;;
+esac
 
 cleanup_on_exit() {
   local rc=$?
@@ -326,7 +332,8 @@ navi_mode=1 时默认在独立终端打开 Publish Point 路径点记录器，�
   SCAN_CLICKED_WAYPOINTS_DRIVE=1       默认点选后发布导航目标；0 表示只记录
   SCAN_CAMERA_ENABLE=1                 1/0，默认把 Go2 前置相机接入 RViz
   SCAN_CAMERA_URL=...                  默认 http://192.168.76.1:8765/frame.jpg
-  SCAN_CAMERA_FPS=15                   相机显示帧率，约 94 KB/帧
+  SCAN_CAMERA_FPS=5                    相机显示帧率，约 94 KB/帧
+  SCAN_YOLO_ENABLE=0                   1/0，是否叠加 Go2 YOLO 检测框
   SCAN_LOCAL_WS=...                    本地仓库根目录，默认从脚本位置推导
   SCAN_REMOTE_ROOT=...                 Go2 部署目录，默认 /home/unitree/SCAN-Planner
   SCAN_BRIDGE_PORT=9000                工作站与 Go2 的 TCP 桥端口
@@ -344,7 +351,7 @@ ssh -o ConnectTimeout=5 "$GO2_HOST" true || die "无法 SSH 连接 $GO2_HOST"
 check_dds_config
 remote_run "ros2 daemon stop >/dev/null 2>&1 || true"
 ssh "$GO2_HOST" \
-  "mkdir -p $(printf '%q' "$REMOTE_ROOT/tools") $(printf '%q' "$REMOTE_ROOT/maps")"
+  "mkdir -p $(printf '%q' "$REMOTE_ROOT/tools") $(printf '%q' "$REMOTE_ROOT/maps") $(printf '%q' "$REMOTE_ROOT/perception")"
 
 if (( restart == 1 )); then
   printf '重启模式：无条件先停止两端已有服务...\n'
@@ -418,7 +425,13 @@ if (( CAMERA_ENABLED == 1 )); then
     printf '警告: 前置相机暂未出图，检查 Go2 的 %s\n' "$CAMERA_URL" >&2
   fi
 fi
-
+if (( YOLO_ENABLED == 1 )); then
+  if (( CAMERA_ENABLED == 1 )); then
+    "$SCRIPT_DIR/start_yolo_overlay.sh"
+  else
+    printf '警告: SCAN_YOLO_ENABLE=1 但 SCAN_CAMERA_ENABLE=0，跳过 YOLO\n' >&2
+  fi
+fi
 printf '\n[7/8] 打开 Publish Point 路径点记录器终端\n'
 if clicked_waypoints_enabled; then
   recorder_args=(
