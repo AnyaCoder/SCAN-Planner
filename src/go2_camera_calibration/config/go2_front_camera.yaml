@@ -43,12 +43,14 @@ extrinsic:
     x: right
     y: down
     z: forward
-  translation_m: [0.3769035887210485, -0.02295849614623441, -0.0006236452949382841]
+  calibrated_translation_m: [0.3769035887210485, -0.02295849614623441, -0.0006236452949382841]
+  ground_alignment_translation_m: [0.0, 0.0, 0.046825]
+  translation_m: [0.3769035887210485, -0.02295849614623441, 0.04620135470506172]
   quaternion_xyzw: [-0.49634274651518967, 0.5111976582170042, -0.4892497972577072, 0.5029467845592636]
   matrix:
     - [-0.0013768198, -0.0153252746, 0.9998816132, 0.3769035887]
     - [-0.9995917241, 0.0285570277, -0.0009387245, -0.0229584961]
-    - [-0.0285392607, -0.9994746781, -0.0153583356, -0.0006236453]
+    - [-0.0285392607, -0.9994746781, -0.0153583356, 0.0462013547]
     - [0.0, 0.0, 0.0, 1.0]
 
 calibration:
@@ -58,6 +60,8 @@ calibration:
   intrinsic_mean_px: 0.374044
   intrinsic_max_px: 0.605638
   extrinsic_method: direct_visual_lidar_calibration_nid
+  ground_alignment_method: transform_sensors_camera_height_baseline
+  ground_alignment_body_z_m: 0.046825
   extrinsic_datasets: [scene01, scene02, scene03, scene04, scene05]
   holdout_translation_difference_m: 0.00017
   holdout_rotation_difference_deg: 0.0092

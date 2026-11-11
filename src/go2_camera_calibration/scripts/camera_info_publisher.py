@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """Publish calibrated fisheye CameraInfo from the installed calibration YAML."""
 
 import argparse

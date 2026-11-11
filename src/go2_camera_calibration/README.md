@@ -26,6 +26,12 @@ The camera optical axes are `x` right, `y` down and `z` forward. `body` is the
 frame used by `/LIO/clouds_lidar`. The FAST-LIO LiDAR-IMU extrinsic is a
 different transform and must not be substituted for this camera extrinsic.
 
+The direct visual calibration translation is retained as
+`extrinsic.calibrated_translation_m`. The published transform also applies the
+`transform_sensors` camera-height baseline of `+0.046825 m` along `body.z`;
+this is a physical extrinsic correction, not an image-space pixel shift. The
+result is stored in `extrinsic.translation_m` and the matrix translation.
+
 ## Launch
 
 ```bash
