@@ -1,0 +1,64 @@
+schema_version: 1
+
+sensor:
+  platform: Unitree Go2 EDU
+  name: go2_front_camera
+  frame_id: go2_front_camera_optical_frame
+  lidar_frame_id: body
+
+camera:
+  model: fisheye
+  distortion_model: equidistant
+  # Intrinsics for the 1280x720 image stream used by SCAN-Planner.
+  image_width: 1280
+  image_height: 720
+  camera_matrix:
+    - [807.9981, 0.0, 631.4618]
+    - [0.0, 810.6790, 368.6453]
+    - [0.0, 0.0, 1.0]
+  distortion_coefficients: [-0.060165324, -0.067757633, 0.097395932, 0.019315854]
+  rectification_matrix:
+    - [1.0, 0.0, 0.0]
+    - [0.0, 1.0, 0.0]
+    - [0.0, 0.0, 1.0]
+  projection_matrix:
+    - [807.9981, 0.0, 631.4618, 0.0]
+    - [0.0, 810.6790, 368.6453, 0.0]
+    - [0.0, 0.0, 1.0, 0.0]
+  native:
+    image_width: 1920
+    image_height: 1080
+    camera_matrix:
+      - [1211.99721992, 0.0, 947.192665936]
+      - [0.0, 1216.01848613, 552.967965287]
+      - [0.0, 0.0, 1.0]
+    horizontal_fov_deg: 94.249
+    vertical_fov_deg: 51.570
+
+extrinsic:
+  parent_frame: body
+  child_frame: go2_front_camera_optical_frame
+  convention: p_body = T_body_camera * p_camera_optical
+  camera_axes:
+    x: right
+    y: down
+    z: forward
+  translation_m: [0.3769035887210485, -0.02295849614623441, -0.0006236452949382841]
+  quaternion_xyzw: [-0.49634274651518967, 0.5111976582170042, -0.4892497972577072, 0.5029467845592636]
+  matrix:
+    - [-0.0013768198, -0.0153252746, 0.9998816132, 0.3769035887]
+    - [-0.9995917241, 0.0285570277, -0.0009387245, -0.0229584961]
+    - [-0.0285392607, -0.9994746781, -0.0153583356, -0.0006236453]
+    - [0.0, 0.0, 0.0, 1.0]
+
+calibration:
+  date: "2026-11-11"
+  intrinsic_samples: 30
+  intrinsic_rms_px: 0.436931
+  intrinsic_mean_px: 0.374044
+  intrinsic_max_px: 0.605638
+  extrinsic_method: direct_visual_lidar_calibration_nid
+  extrinsic_datasets: [scene01, scene02, scene03, scene04, scene05]
+  holdout_translation_difference_m: 0.00017
+  holdout_rotation_difference_deg: 0.0092
+  validation_image: validation/front_camera_lidar_projection.jpg

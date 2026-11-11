@@ -118,6 +118,12 @@ ros2 launch scan_planner run.launch.py \
 - `src/planner/plan_manage/config/controllers.yaml`
 - `src/planner/plan_manage/config/simulator.yaml`
 
+Go2 前置鱼眼相机的内参、畸变和 LiDAR 外参位于
+`src/go2_camera_calibration/config/go2_front_camera.yaml`。该包发布标准
+`/go2/front_camera/camera_info` 以及 `body -> go2_front_camera_optical_frame`
+静态 TF；相机启动脚本会自动加载该包。标定方法、坐标系约定和验证图见
+[`src/go2_camera_calibration/README.md`](src/go2_camera_calibration/README.md)。
+
 ROS 2 参数名称使用点号分隔，例如 `grid_map.resolution`。预设路径点是由 xyz 三元组组成的浮点数组：
 
 ```yaml

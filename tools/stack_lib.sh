@@ -71,6 +71,10 @@ front_camera_decoder_running() {
   pgrep -f 'image_transport republish' >/dev/null 2>&1
 }
 
+front_camera_calibration_running() {
+  pgrep -f 'go2_camera_calibration.*front_camera_calibration\.launch\.py' >/dev/null 2>&1
+}
+
 front_camera_overlay_running() {
   pgrep -f 'yolo_overlay_node( |$)' >/dev/null 2>&1
 }
@@ -81,6 +85,17 @@ front_camera_start() {
   local tools_dir=$3
   local log_dir=$4
   mkdir -p "$log_dir"
+
+  if ! front_camera_calibration_running; then
+    if ros2 pkg prefix go2_camera_calibration >/dev/null 2>&1; then
+      printf '启动前相机标定接口...\n'
+      setsid -f bash -c \
+        "cd $(printf '%q' "$local_ws") && exec ros2 launch go2_camera_calibration front_camera_calibration.launch.py" \
+        >"$log_dir/camera_calibration.log" 2>&1 </dev/null
+    else
+      printf '警告: go2_camera_calibration 未构建，CameraInfo 和相机静态 TF 不会发布\n' >&2
+    fi
+  fi
 
   if ! front_camera_decoder_running && ! front_camera_overlay_running; then
     printf '启动相机 C++ 解码...\n'
@@ -98,6 +113,8 @@ front_camera_start() {
 }
 
 front_camera_stop() {
+  stop_local_pgids "Front camera calibration" \
+    'go2_camera_calibration.*front_camera_calibration\.launch\.py'
   stop_local_pgids "Front camera" 'front_camera_relay\.py'
   stop_local_pgids "Camera decoder" 'image_transport republish|image_transport/republish'
 }
