@@ -70,9 +70,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--url",
-        default=os.environ.get(
-            "SCAN_CAMERA_URL", "http://192.168.76.1:8765/frame.jpg"
-        ),
+        default=os.environ.get("SCAN_CAMERA_URL")
+        or "http://%s:8765/frame.jpg"
+        % os.environ.get("GO2_WIFI_HOST", "192.168.77.18"),
     )
     parser.add_argument(
         "--topic", default="/go2/front_camera/image_raw/compressed"

@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Shared helpers for the Go2 stack launch scripts.
 
+# Keep the Wi-Fi address in one place. Override GO2_HOST for an SSH alias and
+# GO2_WIFI_HOST when the workstation uses the robot's direct hotspot instead.
+GO2_WIFI_HOST=${GO2_WIFI_HOST:-192.168.77.18}
+GO2_HOST=${GO2_HOST:-unitree@$GO2_WIFI_HOST}
+
 wait_local_topic() {
   local topic=$1
   local timeout_s=$2
@@ -52,7 +57,7 @@ stop_local_pgids() {
 # shellcheck disable=SC2034
 front_camera_defaults() {
   CAMERA_ENABLE=${SCAN_CAMERA_ENABLE:-1}
-  CAMERA_URL=${SCAN_CAMERA_URL:-http://${GO2_WIFI_HOST:-192.168.76.1}:8765/frame.jpg}
+  CAMERA_URL=${SCAN_CAMERA_URL:-http://$GO2_WIFI_HOST:8765/frame.jpg}
   CAMERA_FPS=${SCAN_CAMERA_FPS:-5}
   CAMERA_TOPIC=${SCAN_CAMERA_TOPIC:-/go2/front_camera/image_raw}
   CAMERA_COMPRESSED_TOPIC=$CAMERA_TOPIC/compressed

@@ -6,7 +6,6 @@ STOP_SCRIPT="$SCRIPT_DIR/stop_scan_stack.sh"
 # shellcheck source=tools/stack_lib.sh
 source "$SCRIPT_DIR/stack_lib.sh"
 
-GO2_HOST=${GO2_HOST:-go2-wifi}
 REMOTE_HOME=${SCAN_REMOTE_HOME:-/home/unitree}
 REMOTE_ROOT=${SCAN_REMOTE_ROOT:-$REMOTE_HOME/SCAN-Planner}
 REMOTE_GRAPH_WS=${SCAN_REMOTE_GRAPH_WS:-/unitree/module/graph_pid_ws}
@@ -21,9 +20,10 @@ KEYPOINTS_FILE=${SCAN_KEYPOINTS_FILE:-}
 CLICKED_WAYPOINTS_ENABLE=${SCAN_CLICKED_WAYPOINTS_ENABLE:-auto}
 CLICKED_WAYPOINTS_FILE=${SCAN_CLICKED_WAYPOINTS_FILE:-$LOCAL_WS/maps/clicked_waypoints.yaml}
 CLICKED_WAYPOINTS_Z=${SCAN_CLICKED_WAYPOINTS_Z:-0.4}
-CLICKED_WAYPOINTS_DRIVE=${SCAN_CLICKED_WAYPOINTS_DRIVE:-1}
+CLICKED_WAYPOINTS_DRIVE=${SCAN_CLICKED_WAYPOINTS_DRIVE:-0}
 YOLO_ENABLE=${SCAN_YOLO_ENABLE:-0}
-GO2_WIFI_HOST=${GO2_WIFI_HOST:-192.168.76.1}
+SEMANTIC_ENABLE=${SCAN_SEMANTIC_ENABLE:-0}
+VLM_ENABLE=${SCAN_VLM_ENABLE:-1}
 LOCAL_DDS_CONFIG=${SCAN_LOCAL_DDS_CONFIG:-$HOME/.config/ros2/cyclonedds.xml}
 REMOTE_DDS_CONFIG=${SCAN_REMOTE_DDS_CONFIG:-$REMOTE_HOME/.config/ros2/cyclonedds.xml}
 LOCAL_PYTHON_EXECUTABLE=${SCAN_PYTHON:-/usr/bin/python3}
@@ -45,7 +45,16 @@ case "$YOLO_ENABLE" in
   0|false|off) YOLO_ENABLED=0 ;;
   *) die "SCAN_YOLO_ENABLE 只能是 1/0: $YOLO_ENABLE" ;;
 esac
-
+case "$SEMANTIC_ENABLE" in
+  1|true|on) SEMANTIC_ENABLED=1 ;;
+  0|false|off) SEMANTIC_ENABLED=0 ;;
+  *) die "SCAN_SEMANTIC_ENABLE 只能是 1/0: $SEMANTIC_ENABLE" ;;
+esac
+case "$VLM_ENABLE" in
+  1|true|on) VLM_ENABLED=1 ;;
+  0|false|off) VLM_ENABLED=0 ;;
+  *) die "SCAN_VLM_ENABLE 只能是 1/0: $VLM_ENABLE" ;;
+esac
 cleanup_on_exit() {
   local rc=$?
   if (( rc != 0 && CLEANUP_ON_FAILURE == 1 )); then
@@ -329,14 +338,20 @@ navi_mode=1 时默认在独立终端打开 Publish Point 路径点记录器，�
   SCAN_CLICKED_WAYPOINTS_ENABLE=auto   auto/1/0，默认仅 navi_mode=1 启用
   SCAN_CLICKED_WAYPOINTS_FILE=...      默认 <repo>/maps/clicked_waypoints.yaml
   SCAN_CLICKED_WAYPOINTS_Z=0.4         点击点未到达前使用的固定高度
-  SCAN_CLICKED_WAYPOINTS_DRIVE=1       默认点选后发布导航目标；0 表示只记录
+  SCAN_CLICKED_WAYPOINTS_DRIVE=0       默认只记录；1 才会点选后立即发布目标
   SCAN_CAMERA_ENABLE=1                 1/0，默认把 Go2 前置相机接入 RViz
-  SCAN_CAMERA_URL=...                  默认 http://192.168.76.1:8765/frame.jpg
+  SCAN_CAMERA_URL=...                  默认 http://$GO2_WIFI_HOST:8765/frame.jpg
   SCAN_CAMERA_FPS=5                    相机显示帧率，约 94 KB/帧
   SCAN_YOLO_ENABLE=0                   1/0，是否叠加 Go2 YOLO 检测框
+  SCAN_OVERLAY_WIDTH=0                 组合画面输出宽度；0 表示保持 1280x720
+  SCAN_SEMANTIC_ENABLE=0               1/0，是否启动 SegFormer-B0 室内语义分割
+  SCAN_SEMANTIC_FPS=5                  Go2 TensorRT 语义推理和更新频率
+  SCAN_VLM_ENABLE=1                    1/0，默认随完整栈启动 VLM 候选点节点
   SCAN_LOCAL_WS=...                    本地仓库根目录，默认从脚本位置推导
   SCAN_REMOTE_ROOT=...                 Go2 部署目录，默认 /home/unitree/SCAN-Planner
   SCAN_BRIDGE_PORT=9000                工作站与 Go2 的 TCP 桥端口
+  GO2_HOST=...                         SSH 目标，默认 unitree@$GO2_WIFI_HOST
+  GO2_WIFI_HOST=...                    Go2 局域网 Wi-Fi 地址，默认 192.168.77.18
 EOF
       exit 0
       ;;
@@ -350,6 +365,7 @@ command -v ssh >/dev/null 2>&1 || die "找不到 ssh"
 ssh -o ConnectTimeout=5 "$GO2_HOST" true || die "无法 SSH 连接 $GO2_HOST"
 check_dds_config
 remote_run "ros2 daemon stop >/dev/null 2>&1 || true"
+# shellcheck disable=SC2029
 ssh "$GO2_HOST" \
   "mkdir -p $(printf '%q' "$REMOTE_ROOT/tools") $(printf '%q' "$REMOTE_ROOT/maps") $(printf '%q' "$REMOTE_ROOT/perception")"
 
@@ -363,10 +379,9 @@ fi
 check_local_workspace
 CLEANUP_ON_FAILURE=1
 ros2 daemon stop >/dev/null 2>&1 || true
-scp -q "$SCRIPT_DIR/scan_wifi_bridge.py" "$GO2_HOST:$REMOTE_ROOT/tools/scan_wifi_bridge.py" || \
-  die "无法同步 TCP 桥到 Go2"
-# shellcheck disable=SC2029
-ssh "$GO2_HOST" "chmod +x '$REMOTE_ROOT/tools/scan_wifi_bridge.py'"
+scp -q "$SCRIPT_DIR/scan_wifi_bridge.py" \
+  "$GO2_HOST:$REMOTE_ROOT/tools/scan_wifi_bridge.py" || \
+  die "无法同步 Wi-Fi 桥到 Go2"
 
 printf '\n[1/8] 启动 Mid-360 驱动\n'
 start_remote livox "$REMOTE_GRAPH_WS" "ros2 launch livox_ros_driver2 msg_MID360_launch.py"
@@ -430,6 +445,24 @@ if (( YOLO_ENABLED == 1 )); then
     "$SCRIPT_DIR/start_yolo_overlay.sh"
   else
     printf '警告: SCAN_YOLO_ENABLE=1 但 SCAN_CAMERA_ENABLE=0，跳过 YOLO\n' >&2
+  fi
+fi
+if (( SEMANTIC_ENABLED == 1 )); then
+  if (( CAMERA_ENABLED == 1 )); then
+    if ! "$SCRIPT_DIR/start_semantic_scene.sh"; then
+      printf '警告: 语义分割未启动；不会影响 LiDAR 和导航安全链路。\n' >&2
+    fi
+  else
+    printf '警告: SCAN_SEMANTIC_ENABLE=1 但 SCAN_CAMERA_ENABLE=0，跳过语义分割\n' >&2
+  fi
+fi
+if (( VLM_ENABLED == 1 )); then
+  if (( CAMERA_ENABLED == 1 )); then
+    if ! "$SCRIPT_DIR/start_vlm_pixel_shadow.sh"; then
+      printf '警告: VLM 未启动；Front Camera 叠加图可能不可用。\n' >&2
+    fi
+  else
+    printf '警告: SCAN_VLM_ENABLE=1 但 SCAN_CAMERA_ENABLE=0，跳过 VLM\n' >&2
   fi
 fi
 printf '\n[7/8] 打开 Publish Point 路径点记录器终端\n'

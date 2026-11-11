@@ -2,9 +2,9 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=tools/stack_lib.sh
+source "$SCRIPT_DIR/stack_lib.sh"
 WS=${SCAN_LOCAL_WS:-$(cd -- "$SCRIPT_DIR/.." && pwd)}
-GO2_HOST=${GO2_HOST:-go2-wifi}
-GO2_WIFI_HOST=${GO2_WIFI_HOST:-192.168.76.1}
 REMOTE_HOME=${SCAN_REMOTE_HOME:-/home/unitree}
 REMOTE_ROOT=${SCAN_REMOTE_ROOT:-$REMOTE_HOME/SCAN-Planner}
 REMOTE_GRAPH_WS=${SCAN_REMOTE_GRAPH_WS:-/unitree/module/graph_pid_ws}
@@ -45,8 +45,8 @@ status 查看进程、重定位状态和当前回放日志。
 环境变量:
   SCAN_NAVI_MODE=2
   SCAN_RELOCALIZATION_TIMEOUT=180
-  GO2_HOST=go2-wifi
-  GO2_WIFI_HOST=192.168.76.1
+  GO2_HOST=unitree@$GO2_WIFI_HOST
+  GO2_WIFI_HOST=$GO2_WIFI_HOST
 EOF
 }
 
@@ -100,22 +100,6 @@ resolve_bundle() {
   [[ -f "$WAYPOINTS_FILE" ]] || die "找不到路径点: $WAYPOINTS_FILE"
 }
 
-stop_local_pgids() {
-  local label=$1 pattern=$2
-  local pgids=() ownpg
-  ownpg=$(ps -o pgid= -p $$ | tr -d ' ')
-  mapfile -t pgids < <(
-    ps -eo pid=,pgid=,args= | PATTERN="$pattern" awk -v own="$$" -v ownpg="$ownpg" \
-      '$1 != own && $2 != ownpg && $0 ~ ENVIRON["PATTERN"] {print $2}' | sort -u
-  )
-  ((${#pgids[@]})) || return 0
-  printf '停止 %s: PGID %s\n' "$label" "${pgids[*]}"
-  local pgid
-  for pgid in "${pgids[@]}"; do kill -TERM -- "-$pgid" 2>/dev/null || true; done
-  sleep 1
-  for pgid in "${pgids[@]}"; do kill -KILL -- "-$pgid" 2>/dev/null || true; done
-}
-
 stop_chain() {
   printf '停止旧链路...\n'
   "$WS/tools/stop_scan_stack.sh" || true
@@ -132,6 +116,7 @@ REMOTE
 }
 
 start_remote_chain() {
+  # shellcheck disable=SC2029
   ssh "$GO2_HOST" \
     "mkdir -p $(printf '%q' "$REMOTE_ROOT/maps") $(printf '%q' "$REMOTE_ROOT/tools")"
   scp -q "$MAP_FILE" "$GO2_HOST:$REMOTE_MAP"
@@ -162,17 +147,6 @@ start_local_bridge() {
   mkdir -p "$LOCAL_LOG_DIR"
   setsid -f bash -c "cd '$WS' && exec '$PYTHON_EXECUTABLE' tools/scan_wifi_bridge.py --client --host '$GO2_WIFI_HOST' --port '$BRIDGE_PORT'" \
     >"$LOCAL_LOG_DIR/wifi_bridge.log" 2>&1 </dev/null
-}
-
-wait_local_topic() {
-  local topic=$1 deadline=$((SECONDS + ${2:-30}))
-  while ((SECONDS < deadline)); do
-    if timeout 4 ros2 topic list --no-daemon --spin-time 1 2>/dev/null | grep -Fxq -- "$topic"; then
-      return 0
-    fi
-    sleep 1
-  done
-  return 1
 }
 
 check_relocalization_converged() {
@@ -223,6 +197,7 @@ wait_for_converged() {
 }
 
 start_replay_nodes() {
+  # shellcheck disable=SC2029
   ssh "$GO2_HOST" "mkdir -p $(printf '%q' "$REMOTE_ROOT/tools")"
   scp -q "$SCRIPT_DIR/publish_unitree_joint_states.py" \
     "$GO2_HOST:$REMOTE_ROOT/tools/publish_unitree_joint_states.py"

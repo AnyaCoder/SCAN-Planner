@@ -2,8 +2,9 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=tools/stack_lib.sh
+source "$SCRIPT_DIR/stack_lib.sh"
 WS=${SCAN_LOCAL_WS:-$(cd -- "$SCRIPT_DIR/.." && pwd)}
-GO2_HOST=${GO2_HOST:-go2-wifi}
 REMOTE_HOME=${SCAN_REMOTE_HOME:-/home/unitree}
 REMOTE_ROOT=${SCAN_REMOTE_ROOT:-$REMOTE_HOME/SCAN-Planner}
 REMOTE_GRAPH_WS=${SCAN_REMOTE_GRAPH_WS:-/unitree/module/graph_pid_ws}

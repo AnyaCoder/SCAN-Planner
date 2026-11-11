@@ -10,6 +10,7 @@ server supports multiple concurrent clients with per-client topic filters.
 import argparse
 import collections
 import json
+import os
 import socket
 import struct
 import threading
@@ -675,7 +676,9 @@ def main():
     mode.add_argument("--server", action="store_true")
     mode.add_argument("--client", action="store_true")
     parser.add_argument("--bind", default="0.0.0.0")
-    parser.add_argument("--host", default="192.168.76.1")
+    parser.add_argument(
+        "--host", default=os.environ.get("GO2_WIFI_HOST", "192.168.77.18")
+    )
     parser.add_argument("--port", type=int, default=9000)
     parser.add_argument(
         "--topics",

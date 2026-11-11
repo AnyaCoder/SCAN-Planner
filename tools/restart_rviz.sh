@@ -7,7 +7,6 @@ source "$SCRIPT_DIR/stack_lib.sh"
 LOCAL_WS=${SCAN_LOCAL_WS:-$(cd -- "$SCRIPT_DIR/.." && pwd)}
 LOCAL_LOG_DIR=${SCAN_LOCAL_LOG_DIR:-/tmp/scan_planner_local_logs}
 LOCAL_DDS_CONFIG=${SCAN_LOCAL_DDS_CONFIG:-$HOME/.config/ros2/cyclonedds.xml}
-GO2_WIFI_HOST=${GO2_WIFI_HOST:-192.168.76.1}
 BRIDGE_PORT=${SCAN_BRIDGE_PORT:-9000}
 BRIDGE_LOG="$LOCAL_LOG_DIR/wifi_bridge.log"
 PYTHON_EXECUTABLE=${SCAN_PYTHON:-/usr/bin/python3}

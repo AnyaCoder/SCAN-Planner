@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-GO2_HOST=${GO2_HOST:-go2-wifi}
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=tools/stack_lib.sh
+source "$SCRIPT_DIR/stack_lib.sh"
 REMOTE_HOME=${SCAN_REMOTE_HOME:-/home/unitree}
 REMOTE_ROOT=${SCAN_REMOTE_ROOT:-$REMOTE_HOME/SCAN-Planner}
 REMOTE_GRAPH_WS=${SCAN_REMOTE_GRAPH_WS:-/unitree/module/graph_pid_ws}
 REMOTE_FASTLIO_WS=${SCAN_REMOTE_FASTLIO_WS:-$REMOTE_HOME/fastlio_ws}
 REMOTE_DDS_CONFIG=${SCAN_REMOTE_DDS_CONFIG:-$REMOTE_HOME/.config/ros2/cyclonedds.xml}
-# shellcheck source=tools/stack_lib.sh
-source "$SCRIPT_DIR/stack_lib.sh"
-
 remote_stop_group() {
   local name=$1
   local pattern=$2
@@ -89,6 +87,14 @@ stop_local_pgids "YOLO overlay" 'yolo_overlay_node( |$)'
 
 printf '停止工作站前置相机...\n'
 front_camera_stop
+
+printf '停止工作站语义分割...\n'
+"$SCRIPT_DIR/stop_semantic_scene.sh"
+
+printf '停止工作站 VLM 节点...\n'
+stop_local_pgids "VLM pixel shadow" 'vlm_pixel_shadow\.py'
+stop_local_pgids "llama.cpp SSH tunnel" \
+  'ssh .* -L 8001:127\.0\.0\.1:8001 AnyaCoder@10\.126\.62\.90'
 
 printf '停止 Go2 服务...\n'
 if ! ssh -o ConnectTimeout=5 "$GO2_HOST" true; then

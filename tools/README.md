@@ -63,7 +63,7 @@ On the workstation:
 
 ```bash
 python3 tools/scan_wifi_bridge.py \
-  --client --host 192.168.76.1 --port 9000
+  --client --host 192.168.77.18 --port 9000
 ```
 
 The bridge keeps only the newest sample per topic, rejects stale backlogs, and
@@ -79,16 +79,16 @@ Each client can limit the uplink topics it receives:
 ```bash
 # Full SCAN visualization, the default
 python3 tools/scan_wifi_bridge.py \
-  --client --host 192.168.76.1 --port 9000
+  --client --host 192.168.77.18 --port 9000
 
 # Point cloud and pose only
 python3 tools/scan_wifi_bridge.py \
-  --client --host 192.168.76.1 --port 9000 \
+  --client --host 192.168.77.18 --port 9000 \
   --topics /LIO/clouds_lidar,/LIO/odom_vehicle,/tf,/tf_static
 
 # Control/downlink only; receive no uplink topics
 python3 tools/scan_wifi_bridge.py \
-  --client --host 192.168.76.1 --port 9000 --topics none
+  --client --host 192.168.77.18 --port 9000 --topics none
 ```
 
 The filter is negotiated during the clock handshake. Topics not requested by
@@ -101,16 +101,21 @@ use global `--compress` only on a severely bandwidth-limited link.
 `start_scan_stack.sh` starts and stops both ends automatically.
 
 The workstation pulls the Go2 front camera directly from
-`http://192.168.76.1:8765/frame.jpg` over Wi-Fi, without adding a ROS node on
+`http://192.168.77.18:8765/frame.jpg` over Wi-Fi, without adding a ROS node on
 the robot or passing camera frames through the state bridge. A separate
 `front_camera_relay.py` process publishes `CompressedImage`, then the C++
 `image_transport republish` node decodes it to
 `/go2/front_camera/image_raw` for the RViz `Front Camera` display.
 The workstation needs `ros-foxy-compressed-image-transport`.
+Both the front camera and VLM overlay start by default with the full stack. Set
+`SCAN_CAMERA_ENABLE=0` to disable the camera, or `SCAN_VLM_ENABLE=0` to keep the
+camera but skip VLM candidate generation.
 The Unitree source is 1920x1080; `front_camera_bridge.py` downsamples it to
-1280x720 before JPEG encoding. The default is 5 Hz, about 0.45 MB/s, matching
-the YOLO detection rate; raise it with `SCAN_CAMERA_FPS=15` if needed. Disable
-the camera with `SCAN_CAMERA_ENABLE=0`.
+1280x720 before JPEG encoding. The default is 5 Hz, about 0.45 MB/s; raise it
+with `SCAN_CAMERA_FPS=15` if needed. Disable the camera with
+`SCAN_CAMERA_ENABLE=0`. YOLO, SegFormer, and the depth-color camera overlay are
+disabled by default and can be enabled explicitly with their `SCAN_*_ENABLE`
+environment variables.
 
 ## YOLO overlay
 
@@ -119,7 +124,37 @@ that JSON and draws the boxes while decoding the existing camera stream, so no
 second video stream is sent over Wi-Fi. The annotated frames replace the
 `image_transport republish` decoder and still use
 `/go2/front_camera/image_raw`, which means the existing RViz `Front Camera`
-display needs no change.
+display needs no change. The combined overlay keeps the calibrated
+`1280x720` camera resolution by default so image pixels stay in the same
+coordinate system as `CameraInfo`, SegFormer masks, and camera projections.
+Set `SCAN_OVERLAY_WIDTH` only when a smaller display is explicitly desired.
+
+For pixel-to-world validation, start the VLM shadow node with
+`./tools/start_vlm_pixel_shadow.sh`. The VLM makes one low-reasoning request,
+returns a normalized floor pixel, and the node locks that point in the world.
+The launcher now defaults to the multimodal
+`unsloth/Qwen3.5-27B-GGUF` llama.cpp server behind an SSH tunnel to
+`AnyaCoder@10.126.62.90:127.0.0.1:8001`. Set
+`SCAN_VLM_API_BACKEND=remote` and provide `SCAN_VLM_API_URL`,
+`SCAN_VLM_MODEL`, plus `VLM_API_KEY` in the Go2 `~/.env` to use another
+OpenAI-compatible multimodal endpoint.
+The local ground plane is estimated from the LiDAR cloud rather than assuming
+`z=0`. After locking, no further model requests are made: the fixed world
+point is projected back through the calibrated fisheye camera at the camera
+rate, so its image marker follows naturally as Go2 moves. The pin and ray are
+published on `/vlm_pixel_shadow`, while the live debug image is published on
+`/go2/front_camera/vlm_point_overlay`. The prompt targets a visible mid-range
+ground point rather than the farthest visible ground. Targets farther than
+`SCAN_VLM_PIXEL_MAX_DISTANCE` (default `5.5` m from robot center) are rejected
+and never locked.
+
+Navigation is approval-gated. A locked point does not publish anything to
+`/move_base_simple/goal` until `批准并发送到 SCAN` is clicked in the
+`VLM Approval` RViz panel. Approval publishes exactly one goal to SCAN;
+`让 VLM 重选` clears the locked point, marker, and approval state, then
+requests a new low-reasoning selection. SCAN still performs its normal
+planning, collision checks, and emergency stop. Set `SCAN_VLM_DRIVE=0` for
+display-only validation.
 
 Build the workstation node once:
 
@@ -169,7 +204,7 @@ Logs:
 
 - `/tmp/scan_planner_logs/yolo.log`
 - `/tmp/scan_planner_logs/yolo_http.log`
-- `/tmp/scan_planner_local_logs/yolo_overlay.log`
+- `/tmp/scan_planner_local_logs/combined_camera_overlay.log`
 
 `restart_rviz.sh` reopens only the workstation RViz window when the Go2 stack
 is still running. It validates `/tf`, `/LIO/clouds_lidar`, and `world -> body`,
