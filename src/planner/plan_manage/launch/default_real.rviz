@@ -17,6 +17,8 @@ Panels:
       - /Current View1
     Name: Views
     Splitter Ratio: 0.5
+  - Class: scan_planner/VLM Approval
+    Name: VLM Approval
 Visualization Manager:
   Class: ""
   Displays:
@@ -235,7 +237,7 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /go2/front_camera/image_raw
+        Value: /go2/front_camera/vlm_point_overlay
       Value: true
     - Alpha: 1
       Buffer Length: 1
@@ -310,6 +312,17 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /clicked_waypoints
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: VLM Pixel Shadow
+      Namespaces: {}
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /vlm_pixel_shadow
       Value: true
     - Alpha: 1
       Autocompute Intensity Bounds: true

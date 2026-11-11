@@ -1,0 +1,8 @@
+<library path="vlm_approval_panel">
+  <class
+    name="scan_planner/VLM Approval"
+    type="scan_planner::VlmApprovalPanel"
+    base_class_type="rviz_common::Panel">
+    <description>Require explicit approval before publishing a VLM navigation goal.</description>
+  </class>
+</library>

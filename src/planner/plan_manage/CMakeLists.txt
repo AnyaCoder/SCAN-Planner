@@ -4,6 +4,7 @@ project(scan_planner)
 if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 17)
 endif()
+set(CMAKE_AUTOMOC ON)
 add_compile_options(-Wall -Wextra -Wpedantic)
 
 find_package(ament_cmake REQUIRED)
@@ -17,7 +18,10 @@ find_package(nav_msgs REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(path_searching REQUIRED)
 find_package(plan_env REQUIRED)
+find_package(pluginlib REQUIRED)
+find_package(Qt5 REQUIRED COMPONENTS Widgets)
 find_package(rclcpp REQUIRED)
+find_package(rviz_common REQUIRED)
 find_package(scan_planner_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
@@ -46,6 +50,17 @@ target_include_directories(yolo_overlay_node PRIVATE ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(yolo_overlay_node
   CURL::libcurl jsoncpp_lib ${OpenCV_LIBRARIES})
 
+add_library(vlm_approval_panel SHARED
+  src/vlm_approval_panel.cpp
+  include/plan_manage/vlm_approval_panel.hpp)
+target_include_directories(vlm_approval_panel PRIVATE include)
+ament_target_dependencies(vlm_approval_panel
+  rclcpp rviz_common std_msgs jsoncpp)
+target_link_libraries(vlm_approval_panel
+  Qt5::Widgets jsoncpp_lib)
+pluginlib_export_plugin_description_file(rviz_common
+  plugins_description.xml)
+
 foreach(target open_loop_controller closed_loop_controller go2_kinematic_sim go2_gait_publisher)
   add_executable(${target} src/${target}.cpp)
   target_include_directories(${target} PRIVATE include)
@@ -59,11 +74,16 @@ install(TARGETS
   scan_planner_node open_loop_controller closed_loop_controller
   go2_kinematic_sim go2_gait_publisher yolo_overlay_node
   DESTINATION lib/${PROJECT_NAME})
+install(TARGETS vlm_approval_panel
+  LIBRARY DESTINATION lib)
 install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME} OPTIONAL)
 install(FILES launch/default.rviz launch/default_real.rviz
   DESTINATION share/${PROJECT_NAME}/rviz OPTIONAL)
-install(PROGRAMS scripts/clicked_waypoint_recorder.py
+install(PROGRAMS
+  scripts/clicked_waypoint_recorder.py
+  scripts/vlm_common.py
+  scripts/vlm_pixel_shadow.py
   DESTINATION lib/${PROJECT_NAME} OPTIONAL)
 
 if(BUILD_TESTING)
