@@ -27,10 +27,11 @@ frame used by `/LIO/clouds_lidar`. The FAST-LIO LiDAR-IMU extrinsic is a
 different transform and must not be substituted for this camera extrinsic.
 
 The direct visual calibration translation is retained as
-`extrinsic.calibrated_translation_m`. The published transform also applies the
-`transform_sensors` camera-height baseline of `+0.046825 m` along `body.z`;
-this is a physical extrinsic correction, not an image-space pixel shift. The
-result is stored in `extrinsic.translation_m` and the matrix translation.
+`extrinsic.calibrated_translation_m` and published unchanged as
+`extrinsic.translation_m`. `/LIO/clouds_lidar` already contains the
+`transform_sensors` z offset, so applying that offset again to the camera would
+shift the projection upward. The calibration uses no additional image-space
+offset.
 
 ## Launch
 
