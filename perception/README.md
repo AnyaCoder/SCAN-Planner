@@ -6,7 +6,7 @@ Go2 前置相机由现有只读服务提供：
 
 ```text
 Go2 本机:      http://127.0.0.1:8765/frame.jpg
-工作站访问:    http://192.168.76.1:8765/frame.jpg
+工作站访问:    http://192.168.77.18:8765/frame.jpg
 ```
 
 实际输出为 `1280x720`、约 `5 Hz` 的 JPEG。服务只调用 `VideoClient.GetImageSample()`，不涉及运动接口。

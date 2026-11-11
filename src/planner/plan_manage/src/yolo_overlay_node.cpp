@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <memory>
@@ -163,6 +164,76 @@ class DetectionPoller {
   std::string last_json_;
 };
 
+class ImagePoller {
+ public:
+  ImagePoller(std::string url, double interval, double stale_after)
+      : url_(std::move(url)),
+        interval_(interval),
+        stale_after_(stale_after),
+        curl_(curl_easy_init()) {
+    if (!curl_) {
+      throw std::runtime_error("curl_easy_init failed");
+    }
+    thread_ = std::thread(&ImagePoller::Run, this);
+  }
+
+  ~ImagePoller() { Stop(); }
+
+  cv::Mat Snapshot() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (Clock::now() - received_ >
+        std::chrono::duration<double>(stale_after_)) {
+      return {};
+    }
+    return image_.clone();
+  }
+
+  void Stop() {
+    stop_ = true;
+    if (thread_.joinable()) {
+      thread_.join();
+    }
+    if (curl_) {
+      curl_easy_cleanup(curl_);
+      curl_ = nullptr;
+    }
+  }
+
+ private:
+  void Run() {
+    while (!stop_) {
+      try {
+        const std::string encoded = FetchUrl(curl_, url_);
+        if (!encoded.empty()) {
+          const std::vector<uchar> bytes(encoded.begin(), encoded.end());
+          cv::Mat decoded = cv::imdecode(bytes, cv::IMREAD_COLOR);
+          if (!decoded.empty()) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            image_ = std::move(decoded);
+            received_ = Clock::now();
+          }
+        }
+      } catch (const std::exception&) {
+      }
+      const auto deadline =
+          Clock::now() + std::chrono::duration<double>(interval_);
+      while (!stop_ && Clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      }
+    }
+  }
+
+  std::string url_;
+  double interval_;
+  double stale_after_;
+  CURL* curl_ = nullptr;
+  std::thread thread_;
+  std::atomic<bool> stop_{false};
+  mutable std::mutex mutex_;
+  cv::Mat image_;
+  Clock::time_point received_{};
+};
+
 cv::Scalar DetectionColor(const std::string& label) {
   static const cv::Scalar colors[] = {
       cv::Scalar(0, 210, 0),   cv::Scalar(0, 165, 255),
@@ -219,11 +290,15 @@ void DrawDetections(cv::Mat* frame, const std::vector<Detection>& detections) {
 class YoloOverlay : public rclcpp::Node {
  public:
   YoloOverlay(const std::string& input_topic, const std::string& output_topic,
-              const std::string& detections_url, const std::string& frame_id,
-              double poll_interval, double stale_after)
-      : Node("go2_yolo_overlay"),
+              const std::string& detections_url,
+              const std::string& semantic_url, const std::string& frame_id,
+              double poll_interval, double semantic_interval,
+              double stale_after, int output_width)
+      : Node("go2_combined_camera_overlay"),
         frame_id_(frame_id),
-        poller_(detections_url, poll_interval, stale_after) {
+        output_width_(output_width),
+        poller_(detections_url, poll_interval, stale_after),
+        semantic_poller_(semantic_url, semantic_interval, stale_after) {
     const auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable();
     publisher_ = create_publisher<sensor_msgs::msg::Image>(output_topic, qos);
     subscription_ = create_subscription<sensor_msgs::msg::CompressedImage>(
@@ -231,16 +306,23 @@ class YoloOverlay : public rclcpp::Node {
         [this](sensor_msgs::msg::CompressedImage::ConstSharedPtr message) {
           OnImage(std::move(message));
         });
-    RCLCPP_INFO(get_logger(), "%s + YOLO -> %s", input_topic.c_str(),
-                output_topic.c_str());
+    RCLCPP_INFO(get_logger(), "%s + SegFormer + YOLO -> %s",
+                input_topic.c_str(), output_topic.c_str());
   }
 
-  ~YoloOverlay() override { poller_.Stop(); }
+  ~YoloOverlay() override {
+    poller_.Stop();
+    semantic_poller_.Stop();
+  }
 
  private:
   void OnImage(sensor_msgs::msg::CompressedImage::ConstSharedPtr message) {
-    const std::vector<uchar> encoded(message->data.begin(), message->data.end());
-    cv::Mat frame = cv::imdecode(encoded, cv::IMREAD_COLOR);
+    cv::Mat frame = semantic_poller_.Snapshot();
+    if (frame.empty()) {
+      const std::vector<uchar> encoded(message->data.begin(),
+                                      message->data.end());
+      frame = cv::imdecode(encoded, cv::IMREAD_COLOR);
+    }
     if (frame.empty()) {
       WarnThrottled("camera JPEG decode failed");
       return;
@@ -249,6 +331,13 @@ class YoloOverlay : public rclcpp::Node {
     const std::vector<Detection> detections = poller_.Snapshot();
     if (!detections.empty()) {
       DrawDetections(&frame, detections);
+    }
+    if (output_width_ > 0 && frame.cols > output_width_) {
+      const int output_height =
+          static_cast<int>(std::lround(
+              static_cast<double>(frame.rows) * output_width_ / frame.cols));
+      cv::resize(frame, frame, cv::Size(output_width_, output_height), 0.0,
+                 0.0, cv::INTER_AREA);
     }
 
     sensor_msgs::msg::Image output;
@@ -275,7 +364,9 @@ class YoloOverlay : public rclcpp::Node {
   }
 
   std::string frame_id_;
+  int output_width_;
   DetectionPoller poller_;
+  ImagePoller semantic_poller_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr publisher_;
   rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr
       subscription_;
@@ -288,11 +379,17 @@ int main(int argc, char** argv) {
   rclcpp::init(argc, argv);
   std::string input_topic = "/go2/front_camera/image_raw/compressed";
   std::string output_topic = "/go2/front_camera/image_raw";
+  const char* robot_host_env = std::getenv("GO2_WIFI_HOST");
+  const std::string robot_host =
+      robot_host_env == nullptr ? "192.168.77.18" : robot_host_env;
   std::string detections_url =
-      "http://192.168.76.1:8767/latest_detections.json";
+      "http://" + robot_host + ":8767/latest_detections.json";
+  std::string semantic_url = "http://" + robot_host + ":8768/overlay.jpg";
   std::string frame_id = "go2_front_camera_optical_frame";
   double poll_interval = 0.1;
+  double semantic_interval = 0.2;
   double stale_after = 0.8;
+  int output_width = 0;
 
   for (int index = 1; index < argc; ++index) {
     const std::string argument = argv[index];
@@ -302,16 +399,24 @@ int main(int argc, char** argv) {
       output_topic = argv[++index];
     } else if (argument == "--detections-url" && index + 1 < argc) {
       detections_url = argv[++index];
+    } else if (argument == "--semantic-url" && index + 1 < argc) {
+      semantic_url = argv[++index];
     } else if (argument == "--frame-id" && index + 1 < argc) {
       frame_id = argv[++index];
     } else if (argument == "--poll-interval" && index + 1 < argc) {
       poll_interval = std::stod(argv[++index]);
+    } else if (argument == "--semantic-interval" && index + 1 < argc) {
+      semantic_interval = std::stod(argv[++index]);
     } else if (argument == "--stale-after" && index + 1 < argc) {
       stale_after = std::stod(argv[++index]);
+    } else if (argument == "--output-width" && index + 1 < argc) {
+      output_width = std::stoi(argv[++index]);
     }
   }
-  if (poll_interval <= 0.0 || stale_after <= 0.0) {
-    std::cerr << "poll interval and stale timeout must be positive\n";
+  if (poll_interval <= 0.0 || semantic_interval <= 0.0 ||
+      stale_after <= 0.0 || output_width < 0) {
+    std::cerr << "poll intervals and stale timeout must be positive, "
+                 "output width must be non-negative\n";
     rclcpp::shutdown();
     return 2;
   }
@@ -319,8 +424,8 @@ int main(int argc, char** argv) {
   curl_global_init(CURL_GLOBAL_DEFAULT);
   try {
     auto node = std::make_shared<YoloOverlay>(
-        input_topic, output_topic, detections_url, frame_id, poll_interval,
-        stale_after);
+        input_topic, output_topic, detections_url, semantic_url, frame_id,
+        poll_interval, semantic_interval, stale_after, output_width);
     rclcpp::spin(node);
   } catch (const std::exception& error) {
     std::cerr << "ERROR: " << error.what() << '\n';

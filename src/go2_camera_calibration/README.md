@@ -26,12 +26,22 @@ The camera optical axes are `x` right, `y` down and `z` forward. `body` is the
 frame used by `/LIO/clouds_lidar`. The FAST-LIO LiDAR-IMU extrinsic is a
 different transform and must not be substituted for this camera extrinsic.
 
-The direct visual calibration translation is retained as
-`extrinsic.calibrated_translation_m` and published unchanged as
-`extrinsic.translation_m`. `/LIO/clouds_lidar` already contains the
-`transform_sensors` z offset, so applying that offset again to the camera would
-shift the projection upward. The calibration uses no additional image-space
-offset.
+The direct visual calibration rotation is retained as
+`extrinsic.calibrated_quaternion_xyzw`. The published orientation also applies
+the L1 LiDAR mounting pitch of `-15.1 deg`, so the tilted
+`/LIO/clouds_lidar` cloud is projected with a level camera optical axis. The
+fitted ground-plane normal is within `0.59 deg` of horizontal. The
+`0.046825 m` body-z camera offset is a physical translation, not an image-space
+shift.
+
+Distance origins must remain separate:
+
+- VLM image rays start at `go2_front_camera_optical_frame`.
+- RViz target and navigation ranges are measured from the robot-center `base`
+  frame.
+- LiDAR points are measurements in `body`; after projection they are not
+  independent camera range measurements, so the camera ray-ground
+  intersection is authoritative for the target position.
 
 ## Launch
 
