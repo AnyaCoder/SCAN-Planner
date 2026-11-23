@@ -54,4 +54,3 @@ def test_topdown_point_snaps_to_nearby_gray_floor():
 
     assert snapped["x"] == 0.494949
     assert snapped["y"] == 0.505051
-
