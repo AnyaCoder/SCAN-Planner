@@ -83,7 +83,7 @@ def parse_args():
         "--planner-config",
         type=Path,
         default=(
-            Path(__file__).resolve().parents[1]
+            Path(__file__).resolve().parents[2]
             / "src/planner/plan_manage/config/planner.yaml"
         ),
         help="SCAN-Planner YAML containing the double-cylinder footprint.",
