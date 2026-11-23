@@ -125,7 +125,7 @@ class StreamValueParser:
                 "map_y": float(point_match.group(2)),
             }
         turn_match = re.search(
-            r"(?im)^\s*(?:turn|turn_deg)\s*[:=]\s*"
+            r"(?im)(?:^|[ \t])(?:turn|turn_deg)\s*[:=]\s*"
             r"(" + number + r")\s*(?:deg|degrees?)?",
             self.text,
         )

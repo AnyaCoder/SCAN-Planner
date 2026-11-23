@@ -45,6 +45,11 @@ def test_parse_decision_accepts_positive_in_place_turn():
     assert values["turn_deg"] == 45.0
 
 
+def test_parse_decision_finds_turn_after_short_prefix():
+    values = parse_decision_values("Use the right passage. turn: -70 deg")
+    assert values["turn_deg"] == -70.0
+
+
 def test_stream_parser_waits_for_complete_turn_angle():
     parser = StreamValueParser()
     assert parser.feed("turn: -") == {}

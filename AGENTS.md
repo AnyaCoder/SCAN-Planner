@@ -18,8 +18,8 @@ Keep it updated when a milestone, interface, or acceptance criterion changes.
 - The VLM chooses one normalized floor point. Normal-forward requests use the
   front camera and the existing camera-ray/LiDAR back-projection.
 - If the camera is too close to a wall/glass surface and no floor is visible,
-  VLM returns `topdown`. A second request receives the camera and top-down map
-  and returns one signed angle relative to the orange dog heading. The program
+  VLM returns `topdown`. A second request receives only the top-down map and
+  returns one signed angle relative to the orange dog heading. The program
   normalizes it to `[-180, 180]`; operators approve it in RViz before the native
   Unitree Sport API turns the stationary robot in place.
 - Approved in-place turns do not publish a SCAN goal. After the turn ends, the

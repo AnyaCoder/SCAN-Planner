@@ -156,9 +156,9 @@ For pixel-to-world validation, start the VLM shadow node with
 `./tools/start_vlm_pixel_shadow.sh`. The VLM first returns one normalized
 camera-floor point such as `point: 0.62 0.41`. It requests the top-down fallback
 only when the camera is blocked by a nearby wall or cannot see floor.
-The fallback request receives the camera and 10 m dual-LiDAR top-down map in
-that order and returns one signed in-place turn such as `turn: -72`, relative to
-the orange dog heading. Positive angles turn left and negative angles turn right.
+The fallback request receives only the 10 m dual-LiDAR top-down map and returns
+one signed in-place turn such as `turn: -72`, relative to the orange dog
+heading. Positive angles turn left and negative angles turn right.
 The launcher now defaults to the multimodal
 `unsloth/Qwen3.5-27B-GGUF` llama.cpp server behind an SSH tunnel to
 `AnyaCoder@10.126.62.90:127.0.0.1:8001`. Set

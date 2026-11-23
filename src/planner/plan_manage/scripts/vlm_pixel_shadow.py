@@ -57,18 +57,12 @@ or
 topdown"""
 CAMERA_USER_PROMPT = "Choose the next walkable floor point for the dog."
 
-TOPDOWN_LOCALIZATION_SYSTEM_PROMPT = """The first image is the dog's front
-camera. It is blocked by the nearby wall or no floor is visible.
-
-The second image is the 10 m by 10 m top-down map. The dog is at the centre.
-The orange arrow is the dog heading. Find the nearest continuous light-gray
-passage whose centre is clear of green, cyan, and black areas. Estimate the
-in-place rotation needed to face along that passage. Positive angles turn left,
-negative angles turn right, and 180 means turn around. Do not return a floor
-point.
-
-Return one line only, using an integer or decimal angle from -180 to 180:
-turn: angle_deg"""
+TOPDOWN_LOCALIZATION_SYSTEM_PROMPT = """Top-down map. Orange arrow = dog.
+Gray = floor. Black = unknown and not walkable. Green/cyan = obstacle.
+The current heading is blocked; never output 0. Choose the connected gray
+passage with the smallest turn from the arrow. A side passage beats turning
+180. Positive = left, negative = right. Output only:
+turn: N"""
 
 _NUMBER = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
 VISIBLE_DECISION_RE = re.compile(
@@ -1809,11 +1803,10 @@ class VlmPixelShadow(Node):
             "topdown_localization",
             "TOPDOWN_LOCALIZATION_SYSTEM_PROMPT",
             TOPDOWN_LOCALIZATION_SYSTEM_PROMPT,
-            "The camera is blocked by a nearby wall and no floor is visible. "
-            "Find the nearest open passage and estimate the signed in-place "
-            "turn needed to face it.",
-            [encoded_camera, encoded_topdown],
-            [camera_path, topdown_path],
+            "Current heading is blocked. Pick connected gray floor. "
+            "Output non-zero turn: N only.",
+            [encoded_topdown],
+            [topdown_path],
             project_topdown,
         )
         if result is None:
@@ -1825,7 +1818,7 @@ class VlmPixelShadow(Node):
         result["camera_fallback_reason"] = (
             camera_fallback_reason or "VLM requested topdown"
         )
-        result["query_images"] = [camera_path, topdown_path]
+        result["query_images"] = [topdown_path]
         result["point_selection_images"] = [topdown_path]
         result["query_requests"] = query_requests
         result["query_system_prompt_name"] = (
