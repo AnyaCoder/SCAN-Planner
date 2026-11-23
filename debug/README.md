@@ -29,7 +29,7 @@ python3 debug/tools/calibrate_l1_to_mid360.py
 ## Sport yaw / right-stick emulation
 
 `sport_turn.py` uses the native Unitree GO2 SDK to send API `1008` with
-`x=0, y=0, z=<yaw rate>`. It keeps the command active at 50 Hz and uses
+`x=0, y=0, z=<yaw rate>`. It keeps the command active at 200 Hz and uses
 `/sportmodestate` IMU yaw as feedback, then sends zero `Move` and API `1003`
 `StopMove`. This bypasses the ROS bridge while preserving the same Sport
 channel used by the physical controller's right stick.
@@ -38,12 +38,13 @@ channel used by the physical controller's right stick.
 # Dry run: print the command but do not move the robot.
 python3 debug/tools/sport_turn.py --direction right --angle-deg 15
 
-# Run on Go2: default is a 15 degree right turn at 0.8 rad/s.
+# Run on Go2: default is a 15 degree right turn at 1.0 rad/s.
 ./debug/tools/run_sport_turn.sh
 
 # Other rotations.
 ./debug/tools/run_sport_turn.sh --direction left --angle-deg 30
 ./debug/tools/run_sport_turn.sh --direction right --duration 0.6
+./debug/tools/run_sport_turn.sh --direction right --angle-deg 360
 ```
 
 Rates below `0.5 rad/s` are rejected because they can fall inside the GO2

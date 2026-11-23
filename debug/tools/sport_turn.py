@@ -18,8 +18,8 @@ def parse_args():
     parser.add_argument(
         "--yaw-rate",
         type=float,
-        default=0.8,
-        help="Absolute yaw rate in rad/s (default: 0.8).",
+        default=1.0,
+        help="Absolute yaw rate in rad/s (default: 1.0).",
     )
     motion = parser.add_mutually_exclusive_group()
     motion.add_argument(
@@ -35,8 +35,8 @@ def parse_args():
     parser.add_argument(
         "--rate-hz",
         type=float,
-        default=50.0,
-        help="Sport Move publishing rate (default: 50 Hz).",
+        default=200.0,
+        help="Sport Move publishing rate (default: 200 Hz).",
     )
     parser.add_argument(
         "--interface",
@@ -54,23 +54,23 @@ def parse_args():
 def command_plan(args):
     yaw_rate = abs(float(args.yaw_rate))
     rate_hz = float(args.rate_hz)
-    if not 0.5 <= yaw_rate <= 1.0:
+    if not 0.5 <= yaw_rate <= 1.2:
         raise ValueError(
-            "--yaw-rate must be between 0.5 and 1.0 rad/s; lower values "
+            "--yaw-rate must be between 0.5 and 1.2 rad/s; lower values "
             "can fall inside the GO2 Sport yaw deadband"
         )
-    if not 10.0 <= rate_hz <= 200.0:
-        raise ValueError("--rate-hz must be between 10 and 200")
+    if not 10.0 <= rate_hz <= 300.0:
+        raise ValueError("--rate-hz must be between 10 and 300")
 
     if args.duration is not None:
         duration = float(args.duration)
         angle_deg = None
-        if not 0.05 <= duration <= 10.0:
-            raise ValueError("--duration must be between 0.05 and 10 s")
+        if not 0.05 <= duration <= 15.0:
+            raise ValueError("--duration must be between 0.05 and 15 s")
     else:
         angle_deg = 15.0 if args.angle_deg is None else float(args.angle_deg)
-        if not 0.5 <= angle_deg <= 180.0:
-            raise ValueError("--angle-deg must be between 0.5 and 180")
+        if not 0.5 <= angle_deg <= 720.0:
+            raise ValueError("--angle-deg must be between 0.5 and 720")
         duration = None
 
     signed_rate = yaw_rate if args.direction == "left" else -yaw_rate
@@ -85,12 +85,22 @@ class StateReader:
     def __init__(self, subscriber_type, message_type):
         self._lock = threading.Lock()
         self._sample = None
+        self._last_raw_yaw = None
+        self._unwrapped_yaw = 0.0
         self._subscriber = subscriber_type("rt/sportmodestate", message_type)
         self._subscriber.Init(self._receive, 10)
 
     def _receive(self, message):
+        raw_yaw = float(message.imu_state.rpy[2])
+        with self._lock:
+            if self._last_raw_yaw is None:
+                self._unwrapped_yaw = raw_yaw
+            else:
+                self._unwrapped_yaw += wrap_angle(raw_yaw - self._last_raw_yaw)
+            self._last_raw_yaw = raw_yaw
+            unwrapped_yaw = self._unwrapped_yaw
         sample = (
-            float(message.imu_state.rpy[2]),
+            unwrapped_yaw,
             float(message.yaw_speed),
             int(message.mode),
             int(message.error_code),
@@ -149,7 +159,10 @@ def execute(args, signed_rate, angle_deg, duration, rate_hz):
     else:
         target_rad = math.radians(angle_deg)
         # Allow for startup and stopping transients without turning forever.
-        max_duration = max(2.0, 3.0 * target_rad / abs(signed_rate))
+        max_duration = max(
+            2.0,
+            1.5 * target_rad / abs(signed_rate) + 1.5,
+        )
 
     period = 1.0 / rate_hz
     command_count = 0
@@ -161,7 +174,7 @@ def execute(args, signed_rate, angle_deg, duration, rate_hz):
             elapsed = time.monotonic() - started
             if target_rad is not None:
                 yaw, yaw_speed, _, _ = reader.latest()
-                traveled = abs(wrap_angle(yaw - initial_yaw))
+                traveled = abs(yaw - initial_yaw)
                 peak_yaw_speed = max(peak_yaw_speed, abs(yaw_speed))
                 if traveled >= target_rad or elapsed >= max_duration:
                     break
@@ -190,7 +203,7 @@ def execute(args, signed_rate, angle_deg, duration, rate_hz):
     time.sleep(0.45)
     final_yaw, final_yaw_speed, final_mode, final_error = reader.latest()
     reader.close()
-    traveled = wrap_angle(final_yaw - initial_yaw)
+    traveled = final_yaw - initial_yaw
     print(
         "done: yaw=%.3f deg delta=%+.3f deg peak_state_yaw_speed=%.3f "
         "final_yaw_speed=%.3f mode=%d error_code=%d stop=%d"
