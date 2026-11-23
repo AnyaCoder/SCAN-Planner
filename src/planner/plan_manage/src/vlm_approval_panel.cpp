@@ -196,23 +196,33 @@ void VlmApprovalPanel::streamCallback(
   } else if (type == "done") {
     stream_chunks_.push_back("\n\n[VLM 输出完成]\n");
   } else if (type == "coords") {
-    QString message = "\n[落点已读出";
+    const QString action = QString::fromStdString(
+      root.get("action", "").asString());
+    const bool has_turn = root.isMember("turn_delta_deg");
+    QString message = has_turn ? "\n[转角已读出" : "\n[落点已读出";
     if (root.isMember("pixel") && root["pixel"].isArray()) {
       message += QString(" | pixel [%1, %2]")
         .arg(root["pixel"][0].asInt())
         .arg(root["pixel"][1].asInt());
-    } else if (root.isMember("action")) {
-      message += QString(" | %1 %2 deg")
-        .arg(
-          QString::fromStdString(
-            root["action"].asString()))
-        .arg(root.get("heading_delta_deg", 0.0).asFloat(), 0, 'f', 0);
+    } else if (has_turn) {
+      message += QString(" | 原地转向 %1 deg")
+        .arg(root["turn_delta_deg"].asFloat(), 0, 'f', 0);
+    } else if (!action.isEmpty()) {
+      message += QString(" | %1").arg(action);
     }
-    if (root.isMember("target_distance_m")) {
+    if (!has_turn && root.isMember("target_distance_m")) {
       message += QString(" | 距狗 %1 m")
         .arg(root["target_distance_m"].asFloat(), 0, 'f', 2);
     }
     stream_chunks_.push_back(message + "]\n");
+  } else if (type == "turn_done") {
+    stream_chunks_.push_back(
+      QString("\n[原地转向完成 | %1 deg，正在重新观察相机]\n")
+      .arg(root.get("turn_delta_deg", 0.0).asFloat(), 0, 'f', 0));
+  } else if (type == "turn_failed") {
+    stream_chunks_.push_back(
+      QString("\n[原地转向失败 | %1 deg，已解除锁定并重新观察]\n")
+      .arg(root.get("turn_delta_deg", 0.0).asFloat(), 0, 'f', 0));
   } else if (type == "error") {
     stream_chunks_.push_back(
       "\n[VLM 请求失败] " +
@@ -310,8 +320,18 @@ void VlmApprovalPanel::refreshStatus()
     root.get("recommended_action", "").asString());
   const float heading_delta_deg =
     root.get("heading_delta_deg", 0.0).asFloat();
+  const bool sport_turn =
+    root.get("control_mode", "").asString() == "sport_turn";
+  const bool turn_executing =
+    root.get("turn_executing", false).asBool();
   approve_button_->setEnabled(approval_required);
-  approve_button_->setText("批准该落点并发送到 SCAN");
+  if (turn_executing) {
+    approve_button_->setText("正在原地转向...");
+  } else if (sport_turn) {
+    approve_button_->setText("批准原地转向并重新选路");
+  } else {
+    approve_button_->setText("批准该落点并发送到 SCAN");
+  }
   std::ostringstream display;
   if (root.get("preliminary", false).asBool()) {
     display << "VLM 落点已读出并显示，后台正在完成校验。\n";
@@ -363,6 +383,8 @@ void VlmApprovalPanel::refreshStatus()
       }
       display << "]\n";
     }
+  } else if (turn_executing) {
+    display << "狗正在通过原生 Sport 接口原地转向，SCAN 目标保持清空。";
   } else if (root.get("goal_publishing", false).asBool()) {
     display << "已批准，目标已发送给 SCAN。\n";
     if (root.isMember("target_xyz") && root["target_xyz"].isArray()) {

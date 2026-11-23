@@ -19,13 +19,17 @@ Keep it updated when a milestone, interface, or acceptance criterion changes.
   front camera and the existing camera-ray/LiDAR back-projection.
 - If the camera is too close to a wall/glass surface and no floor is visible,
   VLM returns `topdown`. A second request receives the camera and top-down map
-  and chooses one neutral-gray floor point from the local map. The program
-  converts that pixel into a world target and validates gray floor within
-  0.20 m. Top-down fallback never enumerates routes or candidates.
+  and returns one signed angle relative to the orange dog heading. The program
+  normalizes it to `[-180, 180]`; operators approve it in RViz before the native
+  Unitree Sport API turns the stationary robot in place.
+- Approved in-place turns do not publish a SCAN goal. After the turn ends, the
+  old target is cleared and a fresh camera observation starts the plan/select
+  loop again. SCAN-Planner remains responsible for forward goals and collision
+  checking.
 - The VLM does not decide whether the robot can physically pass.
 - Preserve the existing 10 m x 10 m, 5 cm local dual-LiDAR map.
 - Images belong only in the current VLM request. Historical VLM context must
-  contain compact text and approved world points.
+  contain compact text, approved world points, and approved turn angles.
 - Diagnostic scripts and generated snapshots belong under `debug/`; normal
   startup, control, networking, and ROS services stay under `tools/`.
 

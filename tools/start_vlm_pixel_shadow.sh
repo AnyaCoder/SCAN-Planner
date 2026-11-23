@@ -15,6 +15,10 @@ INTERVAL=${SCAN_VLM_PIXEL_INTERVAL:-8}
 MAX_DISTANCE=${SCAN_VLM_PIXEL_MAX_DISTANCE:-4.5}
 MAX_OUTPUT_TOKENS=${SCAN_VLM_MAX_OUTPUT_TOKENS:-128}
 DRIVE=${SCAN_VLM_DRIVE:-1}
+TURN_SCRIPT=${SCAN_VLM_TURN_SCRIPT:-$LOCAL_WS/tools/run_sport_turn.sh}
+TURN_YAW_RATE=${SCAN_VLM_TURN_YAW_RATE:-1.0}
+TURN_COMMAND_RATE=${SCAN_VLM_TURN_COMMAND_RATE:-100}
+TURN_TIMEOUT=${SCAN_VLM_TURN_TIMEOUT:-30}
 API_BACKEND=${SCAN_VLM_API_BACKEND:-llama_cpp}
 API_URL=${SCAN_VLM_API_URL:-}
 API_MODEL=${SCAN_VLM_MODEL:-}
@@ -101,6 +105,10 @@ launcher=(
   --max-output-tokens "$MAX_OUTPUT_TOKENS"
   --api-url "$API_URL"
   --model "$API_MODEL"
+  --turn-script "$TURN_SCRIPT"
+  --turn-yaw-rate "$TURN_YAW_RATE"
+  --turn-command-rate "$TURN_COMMAND_RATE"
+  --turn-timeout "$TURN_TIMEOUT"
 )
 if [[ "$API_BACKEND" == "llama_cpp" ]]; then
   # Keep the visual decision short and prevent hidden reasoning from delaying
@@ -124,7 +132,7 @@ pgrep -f 'vlm_pixel_shadow\.py' >/dev/null 2>&1 || {
 if [[ "$DRIVE" == "0" ]]; then
   printf 'VLM 像素节点已启动（不发布运动目标）\n'
 else
-  printf 'VLM 像素节点已启动（地图落点必须经 RViz 面板批准）\n'
+  printf 'VLM 节点已启动（落点或原地转向必须经 RViz 面板批准）\n'
 fi
 printf '模型后端: %s (%s, %s)\n' "$API_BACKEND" "$API_MODEL" "$API_URL"
 printf '地图标记: /vlm_pixel_shadow\n'

@@ -236,7 +236,7 @@ def main():
         % (direction, signed_rate, target, rate_hz)
     )
     if not args.execute:
-        print("dry run; pass --execute or use run_sport_turn.sh")
+        print("dry run; pass --execute or use tools/run_sport_turn.sh")
         return
     execute(args, signed_rate, angle_deg, duration, rate_hz)
 

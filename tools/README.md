@@ -2,6 +2,25 @@ Calibration, point-cloud capture, and VLM snapshot debugging helpers live under
 [`debug/tools/`](../debug/tools/). This directory contains the runtime entry
 points for the stack.
 
+# Native in-place turn
+
+`run_sport_turn.sh` drives the Go2 yaw through its native Unitree Sport API. It
+keeps API `1008` active at 100 Hz, uses `/sportmodestate` IMU yaw as feedback,
+then sends zero `Move` and API `1003` `StopMove`. It does not publish a SCAN
+goal or use `/cmd_vel`.
+
+```bash
+# Dry run: print the command without moving the robot.
+python3 tools/sport_turn.py --direction right --angle-deg 15
+
+# Run on Go2 through the hotspot SSH alias.
+./tools/run_sport_turn.sh --direction right --angle-deg 15
+./tools/run_sport_turn.sh --direction left --angle-deg 72
+```
+
+Rates below `0.5 rad/s` are rejected because they can fall inside the Go2
+Sport yaw deadband.
+
 # Relocalization replay
 
 `relocalization_replay.sh` runs the validated
@@ -137,6 +156,9 @@ For pixel-to-world validation, start the VLM shadow node with
 `./tools/start_vlm_pixel_shadow.sh`. The VLM first returns one normalized
 camera-floor point such as `point: 0.62 0.41`. It requests the top-down fallback
 only when the camera is blocked by a nearby wall or cannot see floor.
+The fallback request receives the camera and 10 m dual-LiDAR top-down map in
+that order and returns one signed in-place turn such as `turn: -72`, relative to
+the orange dog heading. Positive angles turn left and negative angles turn right.
 The launcher now defaults to the multimodal
 `unsloth/Qwen3.5-27B-GGUF` llama.cpp server behind an SSH tunnel to
 `AnyaCoder@10.126.62.90:127.0.0.1:8001`. Set
@@ -156,6 +178,10 @@ and never locked.
 Navigation is approval-gated. A locked point does not publish anything to
 `/move_base_simple/goal` until `批准并发送到 SCAN` is clicked in the
 `VLM Approval` RViz panel. Approval publishes exactly one goal to SCAN;
+an approved top-down turn instead calls the native Unitree Sport yaw API at
+100 Hz and leaves `/move_base_simple/goal` untouched. When the turn finishes,
+the old target and markers are cleared, and the camera is observed again before
+the next VLM decision.
 `让 VLM 重选` clears the locked point, marker, and approval state, captures a
 fresh text-free front-camera image and 10 m point-cloud image with the current
 `/LIO/odom_vehicle` pose, and sends the two images separately in camera-then-map
@@ -165,16 +191,17 @@ query or reselect triggers one on-demand render. Both LiDARs are transformed to
 a shared world frame using each frame's own odometry stamp, fused there, and then
 transformed once into the current Go2 IMU frame. Floor returns are gray,
 obstacles are green/cyan, and returns above 1.20 m are removed before rendering.
-The model returns no route list or candidate enumeration. The node preserves
-the model-selected normalized point as the world target and only validates that
-gray floor exists within 0.20 m and that the center is not a green obstacle.
-SCAN-Planner remains responsible for the actual path and collision checks.
+The model returns no route list or candidate enumeration. For normal movement
+the node preserves the model-selected normalized camera point as the world
+target and only validates that gray floor exists within 0.20 m and that the
+center is not a green obstacle. SCAN-Planner remains responsible for the actual
+path and collision checks.
 SCAN still performs its normal planning, collision checks, and emergency stop.
 Set `SCAN_VLM_DRIVE=0` for display-only validation.
 
 The current general-purpose VLM was not trained on this rendered top-down map.
-Camera-point projection is the primary path; the top-down fallback is unstable
-and should not be treated as a validated semantic-navigation capability.
+Camera-point projection is the primary path. Top-down angles remain
+approval-gated because their direction and magnitude can be inaccurate.
 
 Build the workstation node once:
 

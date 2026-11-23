@@ -35,6 +35,23 @@ def test_stream_parser_waits_for_complete_topdown_token():
     assert values["navigation_view"] == "topdown"
 
 
+def test_parse_decision_accepts_signed_in_place_turn():
+    values = parse_decision_values("turn: -72 deg")
+    assert values["turn_deg"] == -72.0
+
+
+def test_parse_decision_accepts_positive_in_place_turn():
+    values = parse_decision_values("turn: +45")
+    assert values["turn_deg"] == 45.0
+
+
+def test_stream_parser_waits_for_complete_turn_angle():
+    parser = StreamValueParser()
+    assert parser.feed("turn: -") == {}
+    values = parser.feed("72", final=True)
+    assert values["turn_deg"] == -72.0
+
+
 def test_parse_decision_rejects_missing_point():
     try:
         parse_decision_values("I cannot decide")

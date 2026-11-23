@@ -68,7 +68,7 @@ def _message_text(body):
 
 
 class StreamValueParser:
-    """Parse one normalized floor point or a top-down fallback token."""
+    """Parse one floor point, top-down request, or signed in-place turn."""
 
     def __init__(self):
         self.text = ""
@@ -124,6 +124,16 @@ class StreamValueParser:
                 "map_x": float(point_match.group(1)),
                 "map_y": float(point_match.group(2)),
             }
+        turn_match = re.search(
+            r"(?im)^\s*(?:turn|turn_deg)\s*[:=]\s*"
+            r"(" + number + r")\s*(?:deg|degrees?)?",
+            self.text,
+        )
+        if turn_match is not None:
+            turn_end = turn_match.end()
+            if not final and turn_end == len(self.text):
+                return {}
+            return {"turn_deg": float(turn_match.group(1))}
         return {}
 
 
@@ -133,7 +143,9 @@ def parse_decision_values(text):
         return result
     if result.get("map_x") is not None and result.get("map_y") is not None:
         return result
-    raise RuntimeError("VLM decision is missing a point or topdown request")
+    if result.get("turn_deg") is not None:
+        return result
+    raise RuntimeError("VLM decision is missing a point, turn, or topdown request")
 
 
 def build_chat_messages(

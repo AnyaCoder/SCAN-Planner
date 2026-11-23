@@ -5,7 +5,7 @@ set -Eeuo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REMOTE_SSH=${SCAN_REMOTE_SSH:-go2-wifi}
 REMOTE_ROOT=${SCAN_REMOTE_ROOT:-/home/unitree/SCAN-Planner}
-REMOTE_TOOLS_DIR=$REMOTE_ROOT/debug/tools
+REMOTE_TOOLS_DIR=$REMOTE_ROOT/tools
 REMOTE_SCRIPT=$REMOTE_TOOLS_DIR/sport_turn.py
 REMOTE_GO2_ROOT=${SCAN_REMOTE_GO2_ROOT:-/home/unitree/go2}
 REMOTE_DDS_RUNTIME=${SCAN_REMOTE_DDS_RUNTIME:-$REMOTE_GO2_ROOT/runtime/dds-0.10.2}

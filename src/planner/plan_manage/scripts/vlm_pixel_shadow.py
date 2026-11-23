@@ -61,15 +61,14 @@ TOPDOWN_LOCALIZATION_SYSTEM_PROMPT = """The first image is the dog's front
 camera. It is blocked by the nearby wall or no floor is visible.
 
 The second image is the 10 m by 10 m top-down map. The dog is at the centre.
-Choose one light-gray floor pixel in a continuous walkable passage, about
-1.5 to 4 m from the dog. Choose near the centre of the long gray corridor,
-not at a wall edge. Follow the open passage direction. The orange arrow is the
-dog heading; if it points into a green wall, do not choose that way. Do not
-choose green, cyan, black, white text, the robot, or an obstacle.
+The orange arrow is the dog heading. Find the nearest continuous light-gray
+passage whose centre is clear of green, cyan, and black areas. Estimate the
+in-place rotation needed to face along that passage. Positive angles turn left,
+negative angles turn right, and 180 means turn around. Do not return a floor
+point.
 
-Use top-down image coordinates: x=0 is left, x=1 is right, y=0 is top, and
-y=1 is bottom. Return one line only:
-point: x y"""
+Return one line only, using an integer or decimal angle from -180 to 180:
+turn: angle_deg"""
 
 _NUMBER = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
 VISIBLE_DECISION_RE = re.compile(
@@ -79,6 +78,9 @@ VISIBLE_DECISION_RE = re.compile(
     + r"\s+"
     + _NUMBER
     + r")"
+    r"|(?:(?:turn|turn_deg)\s*[:=]\s*"
+    + _NUMBER
+    + r"(?:\s*(?:deg|degrees?))?)"
     r"|(?:(?:view|context)\s*[:=]\s*)?(?:topdown|map)"
     r")\s*[.!]?\s*$",
     re.IGNORECASE,
@@ -204,7 +206,7 @@ def neutral_floor_mask(image):
 
 
 def annotate_topdown_query(image, range_m=5.0):
-    """Emphasize gray floor returns and add normalized coordinates."""
+    """Emphasize floor returns and clear the robot footprint."""
     annotated = image.copy()
     floor = neutral_floor_mask(annotated)
     width = image.shape[1]
@@ -213,46 +215,6 @@ def annotate_topdown_query(image, range_m=5.0):
     cv2.circle(annotated, (center, center), keep_clear, (45, 45, 130), 3)
     cv2.circle(floor.view(np.uint8), (center, center), keep_clear, 0, -1)
     annotated[floor] = [190, 190, 190]
-    height, width = annotated.shape[:2]
-    for index in range(1, 10):
-        x = int(round(index * (width - 1) / 10.0))
-        y = int(round(index * (height - 1) / 10.0))
-        cv2.line(annotated, (x, 0), (x, height - 1), (70, 70, 70), 1)
-        cv2.line(annotated, (0, y), (width - 1, y), (70, 70, 70), 1)
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    cv2.putText(
-        annotated, "x=0", (5, 18), font, 0.45, (230, 230, 230), 1, cv2.LINE_AA
-    )
-    cv2.putText(
-        annotated,
-        "x=1",
-        (width - 42, 18),
-        font,
-        0.45,
-        (230, 230, 230),
-        1,
-        cv2.LINE_AA,
-    )
-    cv2.putText(
-        annotated,
-        "y=0",
-        (5, 36),
-        font,
-        0.45,
-        (230, 230, 230),
-        1,
-        cv2.LINE_AA,
-    )
-    cv2.putText(
-        annotated,
-        "y=1",
-        (5, height - 8),
-        font,
-        0.45,
-        (230, 230, 230),
-        1,
-        cv2.LINE_AA,
-    )
     return annotated
 
 
@@ -434,6 +396,32 @@ def action_from_bearing(bearing_deg):
     return "turn_left" if bearing_deg > 0.0 else "turn_right"
 
 
+def normalize_sport_turn_deg(value):
+    """Normalize a VLM correction to Unitree's signed yaw angle."""
+    angle = float(value)
+    if not math.isfinite(angle):
+        raise RuntimeError("VLM in-place turn angle is not finite")
+    angle = (angle + 180.0) % 360.0 - 180.0
+    if angle == -180.0 and float(value) > 0.0:
+        angle = 180.0
+    if abs(angle) < 5.0:
+        raise RuntimeError(
+            "VLM in-place turn angle is too small: %.1f deg" % angle
+        )
+    return angle
+
+
+def result_has_control(result):
+    if result is None:
+        return False
+    if result.get("target_xyz"):
+        return True
+    return (
+        result.get("control_mode") == "sport_turn"
+        and result.get("turn_delta_deg") is not None
+    )
+
+
 def target_bearing_deg(metadata, origin, target):
     """Target bearing relative to robot heading; positive is left."""
     yaw = float((metadata.get("robot_pose") or {}).get("yaw_rad", 0.0))
@@ -455,6 +443,7 @@ class VlmPixelShadow(Node):
         self.latest_cloud = None
         self.latest_cloud_header = None
         self.busy = False
+        self.turn_in_progress = False
         self.last_query_at = 0.0
         self.locked_result = None
         self.goal_published = False
@@ -574,6 +563,13 @@ class VlmPixelShadow(Node):
             self.publish_result(
                 locked_result, image, message.header, republish=True
             )
+        elif (
+            locked_result is not None
+            and locked_result.get("control_mode") == "sport_turn"
+        ):
+            self.publish_result(
+                locked_result, image, message.header, republish=True
+            )
         else:
             self.image_pub.publish(bgr_to_image_message(image, message.header))
 
@@ -610,29 +606,44 @@ class VlmPixelShadow(Node):
     def record_approved_decision(
         self, result, request_reason, navigation_metadata
     ):
-        if (
-            not result.get("walkable")
-            or not result.get("target_xyz")
-        ):
+        if not result.get("walkable"):
             return
-        world_point = [
-            round(float(value), 4) for value in result["target_xyz"]
-        ]
         snapshot = navigation_metadata.get("snapshot") or {}
         decision_time = (
             snapshot.get("captured_at")
             or datetime.now().astimezone().isoformat(timespec="seconds")
         )
-        assistant_content = json.dumps(
-            {
+        turn_deg = result.get("turn_delta_deg")
+        is_turn = result.get("control_mode") == "sport_turn"
+        if is_turn:
+            assistant_data = {
+                "time": decision_time,
+                "turn_delta_deg": round(float(turn_deg), 2),
+            }
+        else:
+            if not result.get("target_xyz"):
+                return
+            world_point = [
+                round(float(value), 4) for value in result["target_xyz"]
+            ]
+            assistant_data = {
                 "time": decision_time,
                 "world_xyz": world_point,
-            },
+            }
+        assistant_content = json.dumps(
+            assistant_data,
             separators=(",", ":"),
         )
         user_content = (
-            "Choose the next walkable point. Navigation request: %s."
-            % request_reason
+            "%s Navigation request: %s."
+            % (
+                (
+                    "The camera was blocked. Choose an in-place turn."
+                    if is_turn
+                    else "Choose the next walkable point."
+                ),
+                request_reason,
+            )
         )
         with self.lock:
             self.chat_history.extend(
@@ -644,13 +655,16 @@ class VlmPixelShadow(Node):
             # Only approved decisions enter action memory, and only the newest
             # entries are sent back to the model.
             self.chat_history = self.chat_history[-16:]
-            self.decision_history_world.append(world_point)
-            self.decision_history_world = self.decision_history_world[-200:]
+            if not is_turn:
+                self.decision_history_world.append(world_point)
+                self.decision_history_world = (
+                    self.decision_history_world[-200:]
+                )
             self.next_request_reason = "next navigation decision"
-        result["world_decision"] = {
-            "time": decision_time,
-            "world_xyz": world_point,
-        }
+        if is_turn:
+            result["turn_decision"] = assistant_data
+        else:
+            result["world_decision"] = assistant_data
         result["chat_history_messages"] = len(self.chat_history)
 
     def publish_topdown_if_updated(self):
@@ -696,6 +710,57 @@ class VlmPixelShadow(Node):
         if image is None:
             return None
         image = self.decorate_topdown_history(image)
+        if (
+            (result or {}).get("walkable")
+            and (result or {}).get("control_mode") == "sport_turn"
+        ):
+            metadata = self.current_navigation_metadata()
+            robot_pose = metadata.get("robot_pose") or {}
+            center = None
+            if "x" in robot_pose and "y" in robot_pose:
+                center = world_xyz_to_topdown_pixel(
+                    [robot_pose["x"], robot_pose["y"]],
+                    (image.shape[1], image.shape[0]),
+                    metadata,
+                )
+            if center is None:
+                center = (image.shape[1] // 2, image.shape[0] // 2)
+            if metadata.get("map_orientation") == "world_fixed":
+                start_angle = -float(robot_pose.get("yaw_rad", 0.0))
+            else:
+                start_angle = -math.pi / 2.0
+            turn_rad = math.radians(
+                float((result or {}).get("turn_delta_deg", 0.0))
+            )
+            radius = max(12, int(round(image.shape[1] * 0.09)))
+            arc = []
+            for index in range(33):
+                angle = (
+                    start_angle
+                    - turn_rad * index / 32.0
+                )
+                arc.append(
+                    [
+                        int(round(center[0] + radius * math.cos(angle))),
+                        int(round(center[1] + radius * math.sin(angle))),
+                    ]
+                )
+            cv2.polylines(
+                image,
+                [np.asarray(arc, dtype=np.int32)],
+                False,
+                (0, 165, 255),
+                4,
+                cv2.LINE_AA,
+            )
+            cv2.circle(
+                image,
+                tuple(arc[-1]),
+                7,
+                (0, 165, 255),
+                -1,
+                cv2.LINE_AA,
+            )
         pixel = (result or {}).get("map_pixel")
         if (result or {}).get("walkable") and pixel:
             u, v = int(pixel[0]), int(pixel[1])
@@ -722,7 +787,8 @@ class VlmPixelShadow(Node):
             return
         with self.lock:
             if (
-                self.busy
+                self.turn_in_progress
+                or self.busy
                 or self.latest_image is None
                 or self.latest_camera_info is None
                 or self.latest_cloud is None
@@ -833,7 +899,7 @@ class VlmPixelShadow(Node):
             }
             with self.lock:
                 superseded = query_generation != self.query_generation
-                has_control = bool(result.get("target_xyz"))
+                has_control = result_has_control(result)
                 if not superseded and (
                     self.args.lock_target
                     and result.get("ok")
@@ -910,6 +976,95 @@ class VlmPixelShadow(Node):
             )
         )
 
+    def execute_sport_turn(self, result):
+        turn_deg = float(result["turn_delta_deg"])
+        direction = "left" if turn_deg > 0.0 else "right"
+        command = [
+            str(self.args.turn_script),
+            "--direction",
+            direction,
+            "--angle-deg",
+            "%.2f" % abs(turn_deg),
+            "--yaw-rate",
+            "%.3f" % self.args.turn_yaw_rate,
+            "--rate-hz",
+            "%.1f" % self.args.turn_command_rate,
+        ]
+        self.get_logger().info(
+            "Executing approved in-place turn: %s %.2f deg"
+            % (direction, abs(turn_deg))
+        )
+        success = False
+        detail = ""
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=str(LOCAL_WS),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=self.args.turn_timeout,
+                check=False,
+            )
+            detail = (completed.stdout or "").strip()[-1200:]
+            success = completed.returncode == 0
+            if not success:
+                detail = (
+                    "turn script exited with %d: %s"
+                    % (completed.returncode, detail)
+                )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            detail = str(exc)
+        finally:
+            with self.lock:
+                self.locked_result = None
+                self.goal_published = False
+                self.last_query_at = 0.0
+                self.last_topdown_mtime_ns = None
+                self.query_generation += 1
+                self.next_request_reason = (
+                    "fresh camera decision after approved in-place turn"
+                )
+                self.turn_in_progress = False
+                self.busy = False
+            markers = MarkerArray()
+            clear = Marker()
+            clear.action = Marker.DELETEALL
+            clear.header.frame_id = self.args.frame_id
+            clear.header.stamp = self.get_clock().now().to_msg()
+            markers.markers.append(clear)
+            self.marker_pub.publish(markers)
+            event = {
+                "type": "turn_done" if success else "turn_failed",
+                "turn_delta_deg": round(turn_deg, 2),
+                "direction": direction,
+                "detail": detail,
+            }
+            self.publish_stream_event(event)
+            self.status_pub.publish(
+                String(
+                    data=json.dumps(
+                        {
+                            "ok": success,
+                            "turn_executing": False,
+                            "turn_completed": success,
+                            "turn_delta_deg": round(turn_deg, 2),
+                            "detail": detail,
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            )
+        if success:
+            self.get_logger().info(
+                "In-place turn completed; requesting a fresh camera decision"
+            )
+        else:
+            self.get_logger().warning(
+                "In-place turn failed; requesting a fresh camera decision: %s"
+                % detail
+            )
+
     def approval_callback(self, message):
         command = message.data.strip().lower()
         if command == "clear_memory":
@@ -943,6 +1098,11 @@ class VlmPixelShadow(Node):
 
         if command == "reselect":
             with self.lock:
+                if self.turn_in_progress:
+                    self.get_logger().warning(
+                        "Reselect ignored while in-place turn is executing"
+                    )
+                    return
                 had_target = self.locked_result is not None
                 cancel_event = self.active_cancel_event
                 self.locked_result = None
@@ -993,10 +1153,24 @@ class VlmPixelShadow(Node):
                     "Approval ignored: this VLM target was already sent"
                 )
                 return
+            # An early streaming coordinate can be approved while the model is
+            # still generating its trailing text. Invalidate that request so
+            # its final result cannot overwrite the approved action.
+            cancel_event = self.active_cancel_event
+            if cancel_event is not None:
+                self.query_generation += 1
+                cancel_event.cancel()
             self.locked_result = dict(self.locked_result)
             self.locked_result["approval_required"] = False
             self.locked_result["approved"] = True
             approved_result = dict(self.locked_result)
+            is_turn = (
+                approved_result.get("control_mode") == "sport_turn"
+            )
+            if is_turn:
+                self.goal_published = True
+                self.turn_in_progress = True
+                self.busy = True
         self.record_approved_decision(
             approved_result,
             "operator approved",
@@ -1008,6 +1182,28 @@ class VlmPixelShadow(Node):
                 }
             },
         )
+        if is_turn:
+            self.status_pub.publish(
+                String(
+                    data=json.dumps(
+                        {
+                            "ok": True,
+                            "approval_required": False,
+                            "turn_executing": True,
+                            "turn_delta_deg": approved_result[
+                                "turn_delta_deg"
+                            ],
+                        }
+                    )
+                )
+            )
+            threading.Thread(
+                target=self.execute_sport_turn,
+                args=(approved_result,),
+                name="vlm-sport-turn",
+                daemon=True,
+            ).start()
+            return
         self.publish_goal(approved_result)
         self.status_pub.publish(
             String(data=json.dumps(approved_result, ensure_ascii=False))
@@ -1229,7 +1425,7 @@ class VlmPixelShadow(Node):
             result["preliminary"] = True
         return result
 
-    def topdown_decision_to_result(
+    def topdown_decision_to_turn_result(
         self,
         decision,
         topdown_image,
@@ -1237,25 +1433,17 @@ class VlmPixelShadow(Node):
         preliminary=False,
         navigation_metadata=None,
     ):
-        """Convert a VLM top-down floor pixel into a world target."""
+        """Convert a VLM top-down heading estimate into a Sport turn action."""
+        del topdown_image
         metadata = navigation_metadata or {}
-        if decision.get("map_x") is None or decision.get("map_y") is None:
-            raise RuntimeError("VLM top-down decision has no map point")
-        x_norm = float(decision["map_x"])
-        y_norm = float(decision["map_y"])
-        snapped = snap_to_nearest_gray_floor(
-            topdown_image, x_norm, y_norm, metadata
-        )
-        if snapped is None:
-            raise RuntimeError(
-                "VLM top-down target (%.3f, %.3f) is not within "
-                "0.2 m of gray floor" % (x_norm, y_norm)
-            )
-        vlm_x_norm, vlm_y_norm = x_norm, y_norm
-        x_norm, y_norm = snapped["x"], snapped["y"]
-        target = topdown_pixel_to_world(x_norm, y_norm, metadata)
+        if decision.get("turn_deg") is None:
+            raise RuntimeError("VLM top-down decision has no turn angle")
+        turn_deg = normalize_sport_turn_deg(decision["turn_deg"])
         robot_pose = metadata.get("robot_pose") or {}
-        if not all(key in robot_pose for key in ("x", "y", "z")):
+        if not all(
+            key in robot_pose
+            for key in ("x", "y", "z", "yaw_rad")
+        ):
             raise RuntimeError("top-down map has no robot pose")
         robot_origin = np.asarray(
             [
@@ -1265,89 +1453,49 @@ class VlmPixelShadow(Node):
             ],
             dtype=np.float64,
         )
-        target_distance = math.hypot(
-            float(target[0] - robot_origin[0]),
-            float(target[1] - robot_origin[1]),
+        absolute_turn = abs(turn_deg)
+        action = (
+            "turn_left"
+            if turn_deg > 0.0
+            else "turn_right"
         )
-        if target_distance < 1.20:
-            raise RuntimeError(
-                "selected top-down target is too close: %.3f m"
-                % target_distance
-            )
-        if target_distance > self.args.max_target_distance:
-            raise RuntimeError(
-                "selected top-down target is too far: %.3f m > %.3f m"
-                % (target_distance, self.args.max_target_distance)
-            )
-
-        height, width = topdown_image.shape[:2]
-        map_pixel = [
-            int(round(x_norm * (width - 1))),
-            int(round(y_norm * (height - 1))),
-        ]
-        bearing_deg = target_bearing_deg(
-            metadata, robot_origin, target
-        )
-        action = action_from_bearing(bearing_deg)
+        if absolute_turn >= 170.0:
+            action = "turn_around"
         result = {
             "ok": True,
             "walkable": True,
             "goal_publishing": False,
-            "pixel": map_pixel,
-            "pixel_source": "topdown_gray_floor",
-            "pixel_normalized": [round(x_norm, 5), round(y_norm, 5)],
-            "vlm_pixel_normalized": [
-                round(vlm_x_norm, 5),
-                round(vlm_y_norm, 5),
-            ],
-            "gray_snap_offset_m": snapped["offset_m"],
+            "pixel": None,
+            "pixel_source": "topdown_turn",
             "camera_pixel": None,
             "camera_visible": False,
-            "map_pixel": map_pixel,
-            "map_pixel_normalized": [
-                round(x_norm, 5),
-                round(y_norm, 5),
-            ],
-            "target_xyz": [round(float(value), 4) for value in target],
+            "map_pixel": None,
+            "target_xyz": None,
             "camera_origin": None,
             "robot_origin": [
                 round(float(value), 4) for value in robot_origin
             ],
-            "range_origin": self.args.distance_frame,
-            "ray_camera": None,
-            "ray_world": None,
-            "ground_intersection_xyz": [
-                round(float(value), 4) for value in target
-            ],
-            "target_distance_m": round(target_distance, 3),
-            "target_source": "vlm_topdown_gray_floor",
-            "lidar_target": {
-                "source": "topdown_gray_floor",
-                "ground_support_distance_m": 0.0,
-                "ground_support_limit_m": 0.21,
-                "ground_support_available": True,
-            },
-            "ground_plane": {
-                "source": "topdown",
-                "z": round(
-                    float(robot_pose["z"])
-                    + float(metadata["ground_z_m"]),
-                    4,
-                ),
-            },
-            "target_bearing_deg": round(bearing_deg, 2),
-            "recommended_action": action,
-            "heading_delta_deg": round(
-                normalize_turn_delta_deg(action, bearing_deg), 2
+            "robot_yaw_deg": round(
+                math.degrees(float(robot_pose["yaw_rad"])),
+                2,
             ),
-            "suggested_forward_distance_m": round(target_distance, 3),
-            "control_mode": "scan_goal",
-            "scene": "vlm_topdown_wall_fallback",
+            "range_origin": self.args.distance_frame,
+            "target_distance_m": 0.0,
+            "target_source": "vlm_topdown_turn",
+            "recommended_action": action,
+            "heading_delta_deg": round(turn_deg, 2),
+            "turn_delta_deg": round(turn_deg, 2),
+            "turn_direction": (
+                "left" if turn_deg > 0.0 else "right"
+            ),
+            "suggested_forward_distance_m": 0.0,
+            "control_mode": "sport_turn",
+            "scene": "vlm_topdown_in_place_turn",
             "locked": False,
             "confidence": 1.0,
             "reason": (
-                "Camera was blocked near a wall; VLM selected a gray "
-                "walkable floor point from the top-down map."
+                "Camera was blocked near a wall; VLM estimated the "
+                "nearest open passage heading from the top-down map."
             ),
             "tf_latest": True,
             "distance_tf_latest": True,
@@ -1464,10 +1612,12 @@ class VlmPixelShadow(Node):
                         }
                     )
                     return
-                if (
-                    values.get("map_x") is None
-                    or values.get("map_y") is None
-                ):
+                has_point = (
+                    values.get("map_x") is not None
+                    and values.get("map_y") is not None
+                )
+                has_turn = values.get("turn_deg") is not None
+                if not has_point and not has_turn:
                     return
                 if project_decision is None:
                     return
@@ -1490,7 +1640,7 @@ class VlmPixelShadow(Node):
                         or query_generation != self.query_generation
                     ):
                         raise QueryCancelled("VLM generation superseded")
-                    has_control = bool(quick_result.get("target_xyz"))
+                    has_control = result_has_control(quick_result)
                     if self.args.lock_target and has_control:
                         self.locked_result = quick_result
                 self.publish_result(quick_result, query_camera, header)
@@ -1506,6 +1656,9 @@ class VlmPixelShadow(Node):
                         "heading_delta_deg": quick_result.get(
                             "heading_delta_deg"
                         ),
+                        "turn_delta_deg": quick_result.get(
+                            "turn_delta_deg"
+                        ),
                         "target_distance_m": quick_result.get(
                             "target_distance_m"
                         ),
@@ -1513,7 +1666,7 @@ class VlmPixelShadow(Node):
                     }
                 )
                 self.get_logger().info(
-                    "Early VLM %s point displayed after %.0f ms at %s"
+                    "Early VLM %s decision displayed after %.0f ms at %s"
                     % (
                         navigation_mode,
                         elapsed_ms,
@@ -1547,12 +1700,14 @@ class VlmPixelShadow(Node):
                 raise RuntimeError(
                     "VLM request has no projection handler"
                 )
-            if (
-                decision.get("map_x") is None
-                or decision.get("map_y") is None
-            ):
+            has_point = (
+                decision.get("map_x") is not None
+                and decision.get("map_y") is not None
+            )
+            has_turn = decision.get("turn_deg") is not None
+            if not has_point and not has_turn:
                 raise RuntimeError(
-                    "VLM response contains no camera point"
+                    "VLM response contains no point or turn angle"
                 )
             return decision, project_decision(
                 decision, elapsed_ms, False
@@ -1642,7 +1797,7 @@ class VlmPixelShadow(Node):
         )[1].tobytes()
 
         def project_topdown(values, elapsed_ms, preliminary):
-            return self.topdown_decision_to_result(
+            return self.topdown_decision_to_turn_result(
                 values,
                 clean_topdown,
                 elapsed_ms,
@@ -1655,14 +1810,15 @@ class VlmPixelShadow(Node):
             "TOPDOWN_LOCALIZATION_SYSTEM_PROMPT",
             TOPDOWN_LOCALIZATION_SYSTEM_PROMPT,
             "The camera is blocked by a nearby wall and no floor is visible. "
-            "Choose one gray floor point from the top-down map.",
+            "Find the nearest open passage and estimate the signed in-place "
+            "turn needed to face it.",
             [encoded_camera, encoded_topdown],
             [camera_path, topdown_path],
             project_topdown,
         )
         if result is None:
             raise RuntimeError(
-                "VLM returned no top-down floor point"
+                "VLM returned no top-down turn angle"
             )
         result["navigation_mode"] = "topdown"
         result["fallback_from_camera"] = True
@@ -2140,6 +2296,35 @@ class VlmPixelShadow(Node):
                 2,
                 cv2.LINE_AA,
             )
+        elif result.get("control_mode") == "sport_turn":
+            turn_deg = float(result.get("turn_delta_deg", 0.0))
+            message = "VLM IN-PLACE TURN  %+.1f deg" % turn_deg
+            box_width = min(image.shape[1] - 24, 430)
+            box_left = (image.shape[1] - box_width) // 2
+            cv2.rectangle(
+                annotated,
+                (box_left, 18),
+                (box_left + box_width, 74),
+                (18, 18, 18),
+                -1,
+            )
+            cv2.rectangle(
+                annotated,
+                (box_left, 18),
+                (box_left + box_width, 74),
+                (0, 165, 255),
+                2,
+            )
+            cv2.putText(
+                annotated,
+                message,
+                (box_left + 18, 54),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.72,
+                (255, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
         elif result.get("camera_pixel"):
             u, v = result["camera_pixel"]
             orange = (0, 165, 255)
@@ -2188,7 +2373,7 @@ class VlmPixelShadow(Node):
             label = (
                 "VLM CAMERA GROUND"
                 if result.get("pixel_source") == "camera_ground"
-                else "VLM TOP-DOWN GRAY"
+                else "VLM SCAN TARGET"
             )
             detail = "cam (%d,%d)  DOG %.2f m  %.0f%%" % (
                 u,
@@ -2243,7 +2428,7 @@ class VlmPixelShadow(Node):
         else:
             distance = float(result.get("target_distance_m", 0.0))
             map_pixel = result.get("map_pixel")
-            message = "SCAN GOAL FROM TOP-DOWN  %.2f m" % distance
+            message = "VLM SCAN GOAL  %.2f m" % distance
             if map_pixel:
                 message = "MAP (%d,%d) -> SCAN GOAL  %.2f m" % (
                     int(map_pixel[0]),
@@ -2284,6 +2469,45 @@ class VlmPixelShadow(Node):
         clear.header.stamp = self.get_clock().now().to_msg()
         clear.action = Marker.DELETEALL
         markers.markers.append(clear)
+        if (
+            result.get("walkable")
+            and result.get("control_mode") == "sport_turn"
+        ):
+            from geometry_msgs.msg import Point
+
+            origin = result.get("robot_origin")
+            yaw_deg = result.get("robot_yaw_deg")
+            turn_deg = result.get("turn_delta_deg")
+            if origin is not None and yaw_deg is not None:
+                turn_rad = math.radians(float(turn_deg))
+                start_yaw = math.radians(float(yaw_deg))
+                radius = 0.45
+                arc = Marker()
+                arc.header.frame_id = self.args.frame_id
+                arc.header.stamp = self.get_clock().now().to_msg()
+                arc.ns = "vlm_in_place_turn"
+                arc.id = 1
+                arc.type = Marker.LINE_STRIP
+                arc.action = Marker.ADD
+                arc.pose.orientation.w = 1.0
+                arc.scale.x = 0.055
+                arc.color.r = 1.0
+                arc.color.g = 0.6
+                arc.color.b = 0.05
+                arc.color.a = 0.98
+                for index in range(33):
+                    angle = start_yaw + turn_rad * index / 32.0
+                    arc.points.append(
+                        Point(
+                            x=float(origin[0]) + radius * math.cos(angle),
+                            y=float(origin[1]) + radius * math.sin(angle),
+                            z=float(origin[2]) + 0.18,
+                        )
+                    )
+                markers.markers.append(arc)
+                if not republish:
+                    self.marker_pub.publish(markers)
+            return
         if not result.get("walkable") or not result.get("target_xyz"):
             self.marker_pub.publish(markers)
             return
@@ -2466,6 +2690,29 @@ def main():
         "--approval-topic", default="/go2/vlm_approval"
     )
     parser.add_argument(
+        "--turn-script",
+        default=str(LOCAL_WS / "tools/run_sport_turn.sh"),
+        help="native GO2 in-place turn launcher",
+    )
+    parser.add_argument(
+        "--turn-yaw-rate",
+        type=float,
+        default=1.0,
+        help="native Sport yaw rate used for approved in-place turns",
+    )
+    parser.add_argument(
+        "--turn-command-rate",
+        type=float,
+        default=100.0,
+        help="Sport Move command rate used for approved in-place turns",
+    )
+    parser.add_argument(
+        "--turn-timeout",
+        type=float,
+        default=30.0,
+        help="maximum native turn process duration",
+    )
+    parser.add_argument(
         "--lock-target", dest="lock_target", action="store_true"
     )
     parser.add_argument(
@@ -2564,6 +2811,9 @@ def main():
         or args.max_target_distance >= args.max_range
         or args.min_camera_target_range <= 0.0
         or args.min_camera_target_range >= args.max_target_distance
+        or not 0.5 <= args.turn_yaw_rate <= 1.2
+        or not 10.0 <= args.turn_command_rate <= 300.0
+        or args.turn_timeout <= 0.0
         or args.max_output_tokens < 16
     ):
         parser.error("target range settings are invalid")
