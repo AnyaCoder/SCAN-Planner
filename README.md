@@ -73,7 +73,7 @@ source install/setup.bash
 ros2 launch scan_planner run.launch.py \
   is_real_world:=false navi_mode:=1 sensor_type:=lidar \
   controller_mode:=closed_loop use_gpu:=false \
-  use_pcd_map:=true pcd_map_file:=$PWD/map.pcd
+  use_pcd_map:=true pcd_map_file:=$PWD/debug/maps/map.pcd
 ```
 
 

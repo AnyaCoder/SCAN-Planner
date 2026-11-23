@@ -2477,31 +2477,48 @@ def main():
     )
     parser.add_argument(
         "--navigation-snapshot-script",
-        default=str(LOCAL_WS / "tools/capture_vlm_navigation_snapshot.sh"),
+        default=str(
+            LOCAL_WS / "debug/tools/capture_vlm_navigation_snapshot.sh"
+        ),
     )
     parser.add_argument(
         "--navigation-camera-image",
-        default=str(LOCAL_WS / "pointcloud_views/front_camera_current.jpg"),
+        default=str(
+            LOCAL_WS / "debug/pointcloud_views/front_camera_current.jpg"
+        ),
     )
     parser.add_argument(
         "--navigation-topdown-image",
-        default=str(LOCAL_WS / "pointcloud_views/mid360_topdown_5s.png"),
+        default=str(
+            LOCAL_WS / "debug/pointcloud_views/mid360_topdown_5s.png"
+        ),
     )
     parser.add_argument(
         "--navigation-prompt-path",
-        default=str(LOCAL_WS / "pointcloud_views/vlm_navigation_current.txt"),
+        default=str(
+            LOCAL_WS
+            / "debug/pointcloud_views/vlm_navigation_current.txt"
+        ),
     )
     parser.add_argument(
         "--navigation-system-prompt-path",
-        default=str(LOCAL_WS / "pointcloud_views/vlm_navigation_system.txt"),
+        default=str(
+            LOCAL_WS
+            / "debug/pointcloud_views/vlm_navigation_system.txt"
+        ),
     )
     parser.add_argument(
         "--navigation-metadata-path",
-        default=str(LOCAL_WS / "pointcloud_views/vlm_navigation_current.json"),
+        default=str(
+            LOCAL_WS
+            / "debug/pointcloud_views/vlm_navigation_current.json"
+        ),
     )
     parser.add_argument(
         "--topdown-image-path",
-        default=str(LOCAL_WS / "pointcloud_views/mid360_topdown_5s.png"),
+        default=str(
+            LOCAL_WS / "debug/pointcloud_views/mid360_topdown_5s.png"
+        ),
     )
     parser.add_argument(
         "--topdown-topic", default="/vlm_navigation/topdown"

@@ -38,7 +38,7 @@ bridge 将里程计坐标系改写为 `world` / `base`，并在 `/tf` 上随每�
 `config/fastlio_bridge.yaml` 的 `world_alignment_*` 把 FAST-LIO 世界系左乘旋转到地面水平。当前 Go2 + Mid-360 的实测量约为 roll `-0.89°`、pitch `-1.83°`。重新标定时，先把四元数设为 `(0, 0, 0, 1)`，重启并在地面静止建图，然后在工作站运行：
 
 ```bash
-python3 tools/calibrate_world_alignment.py
+python3 debug/tools/calibrate_world_alignment.py
 ```
 
 把输出的四元数写回配置并重启。校准后近机器人地面法向残差应小于 `0.2°`。不要用 `ground_height`、障碍膨胀半径或加速度容差去补地面倾斜。

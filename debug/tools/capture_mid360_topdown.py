@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capture a short MID-360 scan and render a labeled 2D top-down PNG."""
+"""Capture a dual-LiDAR window and render an on-demand top-down PNG."""
 
 import argparse
 import json
@@ -129,7 +129,10 @@ def parse_args():
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("/home/unitree/SCAN-Planner/pointcloud_views/mid360_topdown_5s.png"),
+        default=(
+            Path(__file__).resolve().parents[2]
+            / "debug/pointcloud_views/mid360_topdown_5s.png"
+        ),
     )
     parser.add_argument("--input-pcd", type=Path, help="Render a saved PCD instead of capturing ROS data.")
     parser.add_argument("--no-raw", action="store_true", help="Do not keep the captured NPZ data.")

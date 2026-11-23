@@ -26,6 +26,8 @@ Keep it updated when a milestone, interface, or acceptance criterion changes.
 - Preserve the existing 10 m x 10 m, 5 cm local dual-LiDAR map.
 - Images belong only in the current VLM request. Historical VLM context must
   contain compact text and approved world points.
+- Diagnostic scripts and generated snapshots belong under `debug/`; normal
+  startup, control, networking, and ROS services stay under `tools/`.
 
 ## Working Rules
 

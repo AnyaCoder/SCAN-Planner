@@ -3,13 +3,13 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-LOCAL_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
+LOCAL_ROOT=$(cd -- "$SCRIPT_DIR/../.." && pwd)
 REMOTE_SSH=${SCAN_REMOTE_SSH:-go2-wifi}
 REMOTE_ROOT=${SCAN_REMOTE_ROOT:-/home/unitree/SCAN-Planner}
 GO2_WIFI_HOST=${GO2_WIFI_HOST:-192.168.77.2}
 CAMERA_URL=${SCAN_CAMERA_URL:-http://$GO2_WIFI_HOST:8765/frame.jpg}
-OUTPUT_DIR=$LOCAL_ROOT/pointcloud_views
-REMOTE_OUTPUT_DIR=$REMOTE_ROOT/pointcloud_views
+OUTPUT_DIR=$LOCAL_ROOT/debug/pointcloud_views
+REMOTE_OUTPUT_DIR=$REMOTE_ROOT/debug/pointcloud_views
 METADATA_FILE=$OUTPUT_DIR/vlm_navigation_current.json
 
 mkdir -p "$OUTPUT_DIR"

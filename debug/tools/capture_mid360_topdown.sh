@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run on Go2 after the MID-360 driver is publishing /livox/lidar.
+# Diagnostic helper: run on Go2 after the LiDAR drivers start publishing.
 set -Eeo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)

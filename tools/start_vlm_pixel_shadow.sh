@@ -10,6 +10,7 @@ LOCAL_LOG_DIR=${SCAN_LOCAL_LOG_DIR:-/tmp/scan_planner_local_logs}
 LOCAL_DDS_CONFIG=${SCAN_LOCAL_DDS_CONFIG:-$HOME/.config/ros2/cyclonedds.xml}
 PYTHON_EXECUTABLE=${SCAN_PYTHON:-/usr/bin/python3}
 SCRIPT=${SCAN_VLM_PIXEL_SCRIPT:-$LOCAL_WS/src/planner/plan_manage/scripts/vlm_pixel_shadow.py}
+ROLLING_TOPDOWN_SCRIPT=${SCAN_ROLLING_TOPDOWN_SCRIPT:-$LOCAL_WS/debug/tools/start_rolling_topdown.sh}
 INTERVAL=${SCAN_VLM_PIXEL_INTERVAL:-8}
 MAX_DISTANCE=${SCAN_VLM_PIXEL_MAX_DISTANCE:-4.5}
 MAX_OUTPUT_TOKENS=${SCAN_VLM_MAX_OUTPUT_TOKENS:-128}
@@ -89,7 +90,7 @@ export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 export CYCLONEDDS_URI=file://$LOCAL_DDS_CONFIG
 export LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH:-}
 
-"$SCRIPT_DIR/start_rolling_topdown.sh"
+"$ROLLING_TOPDOWN_SCRIPT"
 
 stop_local_pgids "VLM pixel shadow" 'vlm_pixel_shadow\.py' quiet
 launcher=(

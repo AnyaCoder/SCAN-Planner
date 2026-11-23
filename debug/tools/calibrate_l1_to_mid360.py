@@ -24,6 +24,8 @@ from capture_mid360_topdown import (
     transform_to_world_frame,
 )
 
+DEBUG_DIR = Path(__file__).resolve().parents[1]
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -34,8 +36,16 @@ def parse_args():
     parser.add_argument("--voxel", type=float, default=0.08)
     parser.add_argument("--max-iterations", type=int, default=40)
     parser.add_argument("--trim-fraction", type=float, default=0.75)
-    parser.add_argument("--output-json", type=Path, default=Path("/tmp/l1_mid360_calibration.json"))
-    parser.add_argument("--output-image", type=Path, default=Path("/tmp/l1_mid360_calibration.png"))
+    parser.add_argument(
+        "--output-json",
+        type=Path,
+        default=DEBUG_DIR / "calibration/l1_mid360_calibration.json",
+    )
+    parser.add_argument(
+        "--output-image",
+        type=Path,
+        default=DEBUG_DIR / "calibration/l1_mid360_calibration.png",
+    )
     return parser.parse_args()
 
 

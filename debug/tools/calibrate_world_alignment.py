@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Print the world-alignment quaternion estimated from the local ground plane."""
+
 import argparse
 import math
 import struct

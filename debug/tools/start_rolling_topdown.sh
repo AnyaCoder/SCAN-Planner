@@ -5,7 +5,8 @@ set -Eeuo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REMOTE_SSH=${SCAN_REMOTE_SSH:-go2-wifi}
 REMOTE_ROOT=${SCAN_REMOTE_ROOT:-/home/unitree/SCAN-Planner}
-REMOTE_OUTPUT_DIR=$REMOTE_ROOT/pointcloud_views
+REMOTE_OUTPUT_DIR=$REMOTE_ROOT/debug/pointcloud_views
+REMOTE_TOOLS_DIR=$REMOTE_ROOT/debug/tools
 REMOTE_PNG=$REMOTE_OUTPUT_DIR/mid360_topdown_live.png
 REMOTE_JSON=$REMOTE_OUTPUT_DIR/mid360_topdown_live.json
 REMOTE_TRIGGER=$REMOTE_OUTPUT_DIR/mid360_topdown_request
@@ -13,10 +14,10 @@ REMOTE_READY=$REMOTE_OUTPUT_DIR/mid360_topdown_ready.json
 REMOTE_LOG=$REMOTE_OUTPUT_DIR/mid360_topdown_live.log
 
 ssh -o BatchMode=yes "$REMOTE_SSH" \
-  "mkdir -p '$REMOTE_OUTPUT_DIR'"
+  "mkdir -p '$REMOTE_OUTPUT_DIR' '$REMOTE_TOOLS_DIR'"
 scp -q "$SCRIPT_DIR/capture_mid360_topdown.py" \
   "$SCRIPT_DIR/capture_mid360_topdown.sh" \
-  "$REMOTE_SSH:$REMOTE_ROOT/tools/"
+  "$REMOTE_SSH:$REMOTE_TOOLS_DIR/"
 
 window_status=$(
   ssh -o BatchMode=yes "$REMOTE_SSH" "
@@ -33,7 +34,7 @@ window_status=$(
 if [[ "$window_status" == "missing" ]]; then
   ssh -o BatchMode=yes "$REMOTE_SSH" "
     rm -f '$REMOTE_READY' '$REMOTE_TRIGGER'
-    setsid -f bash '$REMOTE_ROOT/tools/capture_mid360_topdown.sh' \
+    setsid -f bash '$REMOTE_TOOLS_DIR/capture_mid360_topdown.sh' \
       --rolling --duration 5 \
       --trigger-file '$REMOTE_TRIGGER' \
       --ready-file '$REMOTE_READY' \

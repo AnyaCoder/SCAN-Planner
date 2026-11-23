@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare separate camera/top-down VLM inputs and one waypoint record."""
+"""Prepare diagnostic camera/top-down VLM inputs and one waypoint record."""
 
 import argparse
 import json

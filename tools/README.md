@@ -1,3 +1,7 @@
+Calibration, point-cloud capture, and VLM snapshot debugging helpers live under
+[`debug/tools/`](../debug/tools/). This directory contains the runtime entry
+points for the stack.
+
 # Relocalization replay
 
 `relocalization_replay.sh` runs the validated
@@ -37,7 +41,7 @@ source /opt/ros/foxy/setup.bash
 source install/local_setup.bash
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 export CYCLONEDDS_URI=file://$HOME/.config/ros2/cyclonedds.xml
-python3 tools/calibrate_world_alignment.py
+python3 debug/tools/calibrate_world_alignment.py
 ```
 
 Run it on a stationary robot with a fresh map. The default `1.5 m` radius and
@@ -146,7 +150,7 @@ rate, so its image marker follows naturally as Go2 moves. The pin and ray are
 published on `/vlm_pixel_shadow`, while the live debug image is published on
 `/go2/front_camera/vlm_point_overlay`. The prompt targets a visible mid-range
 ground point rather than the farthest visible ground. Targets farther than
-`SCAN_VLM_PIXEL_MAX_DISTANCE` (default `5.5` m from robot center) are rejected
+`SCAN_VLM_PIXEL_MAX_DISTANCE` (default `4.5` m from robot center) are rejected
 and never locked.
 
 Navigation is approval-gated. A locked point does not publish anything to
@@ -307,9 +311,10 @@ pcd_save:
 To save the dense map together with the path points while the stack is still
 running, use `save_relocalization_bundle.sh` as described above.
 
-`stop_scan_stack.sh` saves the raw dense map automatically before stopping
-FAST-LIO2.
-Longer scans use more RAM until the final voxel filter runs.
+Set `SCAN_SAVE_MAP_ON_STOP=1` to save the raw dense map before
+`stop_scan_stack.sh` stops FAST-LIO2. Saving is disabled by default to avoid
+writing a large PCD on every restart. Longer scans use more RAM until the final
+voxel filter runs.
 
 Reference DDS configurations:
 
