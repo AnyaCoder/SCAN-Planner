@@ -35,8 +35,8 @@ def parse_args():
     parser.add_argument(
         "--rate-hz",
         type=float,
-        default=200.0,
-        help="Sport Move publishing rate (default: 200 Hz).",
+        default=100.0,
+        help="Sport Move publishing rate (default: 100 Hz).",
     )
     parser.add_argument(
         "--interface",

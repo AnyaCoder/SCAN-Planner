@@ -29,7 +29,7 @@ python3 debug/tools/calibrate_l1_to_mid360.py
 ## Sport yaw / right-stick emulation
 
 `sport_turn.py` uses the native Unitree GO2 SDK to send API `1008` with
-`x=0, y=0, z=<yaw rate>`. It keeps the command active at 200 Hz and uses
+`x=0, y=0, z=<yaw rate>`. It keeps the command active at 100 Hz and uses
 `/sportmodestate` IMU yaw as feedback, then sends zero `Move` and API `1003`
 `StopMove`. This bypasses the ROS bridge while preserving the same Sport
 channel used by the physical controller's right stick.
