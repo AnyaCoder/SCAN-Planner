@@ -72,7 +72,7 @@ def main():
         "--url",
         default=os.environ.get("SCAN_CAMERA_URL")
         or "http://%s:8765/frame.jpg"
-        % os.environ.get("GO2_WIFI_HOST", "192.168.77.18"),
+        % os.environ.get("GO2_WIFI_HOST", "192.168.77.2"),
     )
     parser.add_argument(
         "--topic", default="/go2/front_camera/image_raw/compressed"

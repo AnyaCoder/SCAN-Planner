@@ -346,12 +346,12 @@ navi_mode=1 时默认在独立终端打开 Publish Point 路径点记录器，�
   SCAN_OVERLAY_WIDTH=0                 组合画面输出宽度；0 表示保持 1280x720
   SCAN_SEMANTIC_ENABLE=0               1/0，是否启动 SegFormer-B0 室内语义分割
   SCAN_SEMANTIC_FPS=5                  Go2 TensorRT 语义推理和更新频率
-  SCAN_VLM_ENABLE=1                    1/0，默认随完整栈启动 VLM 候选点节点
+  SCAN_VLM_ENABLE=1                    1/0，默认随完整栈启动 VLM 落点节点
   SCAN_LOCAL_WS=...                    本地仓库根目录，默认从脚本位置推导
   SCAN_REMOTE_ROOT=...                 Go2 部署目录，默认 /home/unitree/SCAN-Planner
   SCAN_BRIDGE_PORT=9000                工作站与 Go2 的 TCP 桥端口
   GO2_HOST=...                         SSH 目标，默认 unitree@$GO2_WIFI_HOST
-  GO2_WIFI_HOST=...                    Go2 局域网 Wi-Fi 地址，默认 192.168.77.18
+  GO2_WIFI_HOST=...                    Go2 局域网 Wi-Fi 地址，默认 192.168.77.2
 EOF
       exit 0
       ;;

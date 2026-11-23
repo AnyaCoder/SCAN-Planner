@@ -11,7 +11,8 @@ LOCAL_DDS_CONFIG=${SCAN_LOCAL_DDS_CONFIG:-$HOME/.config/ros2/cyclonedds.xml}
 PYTHON_EXECUTABLE=${SCAN_PYTHON:-/usr/bin/python3}
 SCRIPT=${SCAN_VLM_PIXEL_SCRIPT:-$LOCAL_WS/src/planner/plan_manage/scripts/vlm_pixel_shadow.py}
 INTERVAL=${SCAN_VLM_PIXEL_INTERVAL:-8}
-MAX_DISTANCE=${SCAN_VLM_PIXEL_MAX_DISTANCE:-5.5}
+MAX_DISTANCE=${SCAN_VLM_PIXEL_MAX_DISTANCE:-4.5}
+MAX_OUTPUT_TOKENS=${SCAN_VLM_MAX_OUTPUT_TOKENS:-128}
 DRIVE=${SCAN_VLM_DRIVE:-1}
 API_BACKEND=${SCAN_VLM_API_BACKEND:-llama_cpp}
 API_URL=${SCAN_VLM_API_URL:-}
@@ -88,16 +89,21 @@ export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 export CYCLONEDDS_URI=file://$LOCAL_DDS_CONFIG
 export LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH:-}
 
+"$SCRIPT_DIR/start_rolling_topdown.sh"
+
 stop_local_pgids "VLM pixel shadow" 'vlm_pixel_shadow\.py' quiet
 launcher=(
   "$PYTHON_EXECUTABLE"
   "$SCRIPT"
   --interval "$INTERVAL"
   --max-target-distance "$MAX_DISTANCE"
+  --max-output-tokens "$MAX_OUTPUT_TOKENS"
   --api-url "$API_URL"
   --model "$API_MODEL"
 )
 if [[ "$API_BACKEND" == "llama_cpp" ]]; then
+  # Keep the visual decision short and prevent hidden reasoning from delaying
+  # the coordinate.
   launcher+=(--reasoning-effort none --disable-thinking)
 fi
 if [[ "$DRIVE" != "0" ]]; then
@@ -117,7 +123,7 @@ pgrep -f 'vlm_pixel_shadow\.py' >/dev/null 2>&1 || {
 if [[ "$DRIVE" == "0" ]]; then
   printf 'VLM 像素节点已启动（不发布运动目标）\n'
 else
-  printf 'VLM 像素节点已启动（候选点必须经 RViz 面板批准）\n'
+  printf 'VLM 像素节点已启动（地图落点必须经 RViz 面板批准）\n'
 fi
 printf '模型后端: %s (%s, %s)\n' "$API_BACKEND" "$API_MODEL" "$API_URL"
 printf '地图标记: /vlm_pixel_shadow\n'

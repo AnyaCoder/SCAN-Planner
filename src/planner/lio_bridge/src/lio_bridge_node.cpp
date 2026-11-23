@@ -129,6 +129,16 @@ public:
     odom_topic_ = declare_parameter<std::string>("odom_topic", "/Odometry");
     cloud_topic_ = declare_parameter<std::string>(
         "cloud_topic", "/cloud_registered_body");
+    secondary_cloud_enabled_ = declare_parameter<bool>("secondary_cloud_enabled", true);
+    secondary_cloud_topic_ = declare_parameter<std::string>(
+        "secondary_cloud_topic", "/utlidar/cloud_base");
+    secondary_cloud_max_age_ = declare_parameter<double>(
+        "secondary_cloud_max_age", 0.20);
+    secondary_transform_x_ = declare_parameter<double>("secondary_transform_x", 0.0);
+    secondary_transform_y_ = declare_parameter<double>("secondary_transform_y", 0.0);
+    secondary_transform_z_ = declare_parameter<double>("secondary_transform_z", 0.0);
+    secondary_transform_yaw_deg_ = declare_parameter<double>(
+        "secondary_transform_yaw_deg", 0.0);
     output_vehicle_topic_ = declare_parameter<std::string>(
         "output_vehicle_topic", "/LIO/odom_vehicle");
     output_imu_topic_ = declare_parameter<std::string>(
@@ -159,6 +169,8 @@ public:
     }
     if (cloud_min_z_ >= cloud_max_z_)
       throw std::invalid_argument("cloud_min_z must be smaller than cloud_max_z");
+    if (secondary_cloud_max_age_ <= 0.0)
+      throw std::invalid_argument("secondary_cloud_max_age must be positive");
     world_alignment_ = tf2::Quaternion(
       alignment_x, alignment_y, alignment_z, alignment_w);
     if (!std::isfinite(world_alignment_.length()) || world_alignment_.length() < 1e-9) {
@@ -172,16 +184,21 @@ public:
     // accumulate stale LIO data when the transport is busy.
     const auto odom_input_qos = rclcpp::QoS(rclcpp::KeepLast(2)).best_effort();
     const auto cloud_input_qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort();
+    const auto secondary_cloud_input_qos = rclcpp::QoS(rclcpp::KeepLast(2)).reliable();
     const auto odom_output_qos = rclcpp::QoS(rclcpp::KeepLast(20)).best_effort();
     const auto cloud_output_qos = rclcpp::QoS(rclcpp::KeepLast(5)).best_effort();
 
     odom_callback_group_ = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
     cloud_callback_group_ = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+    secondary_cloud_callback_group_ =
+      create_callback_group(rclcpp::CallbackGroupType::Reentrant);
 
     rclcpp::SubscriptionOptions odom_options;
     odom_options.callback_group = odom_callback_group_;
     rclcpp::SubscriptionOptions cloud_options;
     cloud_options.callback_group = cloud_callback_group_;
+    rclcpp::SubscriptionOptions secondary_cloud_options;
+    secondary_cloud_options.callback_group = secondary_cloud_callback_group_;
 
     odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
         odom_topic_, odom_input_qos,
@@ -191,6 +208,14 @@ public:
         cloud_topic_, cloud_input_qos,
         [this](sensor_msgs::msg::PointCloud2::ConstSharedPtr msg) { onCloud(msg); },
         cloud_options);
+    if (secondary_cloud_enabled_) {
+      secondary_cloud_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
+          secondary_cloud_topic_, secondary_cloud_input_qos,
+          [this](sensor_msgs::msg::PointCloud2::ConstSharedPtr msg) {
+            onSecondaryCloud(msg);
+          },
+          secondary_cloud_options);
+    }
 
     vehicle_pub_ = create_publisher<nav_msgs::msg::Odometry>(
         output_vehicle_topic_, odom_output_qos);
@@ -205,9 +230,11 @@ public:
 
     RCLCPP_INFO(
         get_logger(),
-        "LIO bridge ready: odom=%s, cloud=%s, output frame=%s child=%s, "
+        "LIO bridge ready: odom=%s, cloud=%s, secondary_cloud=%s, "
+        "output frame=%s child=%s, "
         "world alignment=(%.6f, %.6f, %.6f, %.6f)",
         odom_topic_.c_str(), cloud_topic_.c_str(),
+        secondary_cloud_enabled_ ? secondary_cloud_topic_.c_str() : "disabled",
         output_frame_id_.c_str(), output_child_frame_id_.c_str(),
         world_alignment_.x(), world_alignment_.y(), world_alignment_.z(),
         world_alignment_.w());
@@ -351,10 +378,15 @@ private:
 
   void onCloud(const sensor_msgs::msg::PointCloud2::ConstSharedPtr & msg)
   {
+    sensor_msgs::msg::PointCloud2 fused;
     sensor_msgs::msg::PointCloud2 filtered;
     const sensor_msgs::msg::PointCloud2 * output = msg.get();
+    uint64_t secondary_points = 0;
+    if (secondary_cloud_enabled_ && mergeSecondaryCloud(*msg, fused, secondary_points)) {
+      output = &fused;
+    }
     if (std::isfinite(cloud_max_z_) || std::isfinite(cloud_min_z_)) {
-      filtered = filterCloudByZ(*msg, cloud_min_z_, cloud_max_z_);
+      filtered = filterCloudByZ(*output, cloud_min_z_, cloud_max_z_);
       output = &filtered;
     }
 
@@ -366,6 +398,7 @@ private:
       cloud_frame_ = output->header.frame_id;
       cloud_points_ = point_count;
     }
+    secondary_points_merged_.store(secondary_points, std::memory_order_relaxed);
     if (!cloud_seen_.exchange(true, std::memory_order_relaxed)) {
       RCLCPP_INFO(
           get_logger(), "cloud input frame=%s points=%llu",
@@ -373,6 +406,135 @@ private:
     }
     cloud_pub_->publish(*output);
     cloud_tx_.fetch_add(1, std::memory_order_relaxed);
+  }
+
+  void onSecondaryCloud(const sensor_msgs::msg::PointCloud2::ConstSharedPtr & msg)
+  {
+    secondary_cloud_rx_.fetch_add(1, std::memory_order_relaxed);
+    {
+      std::lock_guard<std::mutex> lock(secondary_cloud_mutex_);
+      latest_secondary_cloud_ = msg;
+      // The Go2 native LiDAR transport can expose a header clock that is
+      // minutes behind ROS time even though frames arrive in real time.
+      // Age the stream by its local receipt time so stale-data rejection
+      // remains usable without requiring firmware clock synchronization.
+      latest_secondary_receive_sec_ = now().seconds();
+    }
+    if (!secondary_cloud_seen_.exchange(true, std::memory_order_relaxed)) {
+      RCLCPP_INFO(
+          get_logger(), "secondary cloud input frame=%s points=%llu",
+          msg->header.frame_id.c_str(),
+          static_cast<unsigned long long>(
+            static_cast<uint64_t>(msg->width) * msg->height));
+    }
+  }
+
+  bool mergeSecondaryCloud(
+      const sensor_msgs::msg::PointCloud2 & primary,
+      sensor_msgs::msg::PointCloud2 & output,
+      uint64_t & secondary_point_count)
+  {
+    sensor_msgs::msg::PointCloud2::ConstSharedPtr secondary;
+    double secondary_receive_sec = 0.0;
+    {
+      std::lock_guard<std::mutex> lock(secondary_cloud_mutex_);
+      secondary = latest_secondary_cloud_;
+      secondary_receive_sec = latest_secondary_receive_sec_;
+    }
+    if (!secondary) {
+      return false;
+    }
+    if (secondary_receive_sec > 0.0 &&
+      now().seconds() - secondary_receive_sec > secondary_cloud_max_age_)
+    {
+      stale_secondary_clouds_.fetch_add(1, std::memory_order_relaxed);
+      return false;
+    }
+    if (!hasField(primary, "x") || !hasField(primary, "y") ||
+      !hasField(primary, "z") || !hasField(*secondary, "x") ||
+      !hasField(*secondary, "y") || !hasField(*secondary, "z"))
+    {
+      return false;
+    }
+
+    std::vector<std::array<float, 4>> points;
+    points.reserve(
+      static_cast<size_t>(primary.width) * primary.height +
+      static_cast<size_t>(secondary->width) * secondary->height);
+    const double transforms[3] = {
+      secondary_transform_x_, secondary_transform_y_, secondary_transform_z_};
+    tf2::Quaternion secondary_rotation;
+    constexpr double kPi = 3.14159265358979323846;
+    secondary_rotation.setRPY(0.0, 0.0, secondary_transform_yaw_deg_ * kPi / 180.0);
+    try {
+      const auto append_point = [&points, &transforms, &secondary_rotation](
+          float x, float y, float z, float intensity,
+          bool apply_secondary_transform) {
+        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z))
+          return;
+        if (apply_secondary_transform) {
+          const auto transformed = tf2::quatRotate(
+            secondary_rotation, tf2::Vector3(x, y, z));
+          points.push_back({
+            static_cast<float>(transformed.x() + transforms[0]),
+            static_cast<float>(transformed.y() + transforms[1]),
+            static_cast<float>(transformed.z() + transforms[2]),
+            intensity});
+        } else {
+          points.push_back({x, y, z, intensity});
+        }
+      };
+      const auto append_cloud = [&append_point](
+          const sensor_msgs::msg::PointCloud2 & cloud,
+          bool apply_secondary_transform) {
+        sensor_msgs::PointCloud2ConstIterator<float> x(cloud, "x");
+        sensor_msgs::PointCloud2ConstIterator<float> y(cloud, "y");
+        sensor_msgs::PointCloud2ConstIterator<float> z(cloud, "z");
+        const bool has_intensity = hasField(cloud, "intensity");
+        if (has_intensity) {
+          sensor_msgs::PointCloud2ConstIterator<float> intensity(cloud, "intensity");
+          for (; x != x.end(); ++x, ++y, ++z, ++intensity) {
+            append_point(*x, *y, *z, *intensity, apply_secondary_transform);
+          }
+        } else {
+          for (; x != x.end(); ++x, ++y, ++z) {
+            append_point(*x, *y, *z, 0.0f, apply_secondary_transform);
+          }
+        }
+      };
+      append_cloud(primary, false);
+      const size_t primary_size = points.size();
+      append_cloud(*secondary, true);
+      secondary_point_count = points.size() - primary_size;
+    } catch (const std::exception &) {
+      secondary_point_count = 0;
+      return false;
+    }
+
+    output.header = primary.header;
+    sensor_msgs::PointCloud2Modifier modifier(output);
+    modifier.setPointCloud2Fields(
+        4,
+        "x", 1, sensor_msgs::msg::PointField::FLOAT32,
+        "y", 1, sensor_msgs::msg::PointField::FLOAT32,
+        "z", 1, sensor_msgs::msg::PointField::FLOAT32,
+        "intensity", 1, sensor_msgs::msg::PointField::FLOAT32);
+    modifier.resize(points.size());
+    sensor_msgs::PointCloud2Iterator<float> ox(output, "x");
+    sensor_msgs::PointCloud2Iterator<float> oy(output, "y");
+    sensor_msgs::PointCloud2Iterator<float> oz(output, "z");
+    sensor_msgs::PointCloud2Iterator<float> oi(output, "intensity");
+    for (const auto & point : points) {
+      *ox = point[0];
+      *oy = point[1];
+      *oz = point[2];
+      *oi = point[3];
+      ++ox;
+      ++oy;
+      ++oz;
+      ++oi;
+    }
+    return true;
   }
 
   static bool hasField(
@@ -453,6 +615,8 @@ private:
   {
     const auto odom = odom_rx_.exchange(0, std::memory_order_relaxed);
     const auto cloud = cloud_rx_.exchange(0, std::memory_order_relaxed);
+    const auto secondary_cloud = secondary_cloud_rx_.exchange(
+      0, std::memory_order_relaxed);
     const auto vehicle_tx = odom_vehicle_tx_.exchange(0, std::memory_order_relaxed);
     const auto imu_tx = odom_imu_tx_.exchange(0, std::memory_order_relaxed);
     const auto cloud_tx = cloud_tx_.exchange(0, std::memory_order_relaxed);
@@ -467,18 +631,31 @@ private:
 
     RCLCPP_INFO(
         get_logger(),
-        "rx/s odom=%llu cloud=%llu | tx/s vehicle=%llu imu=%llu cloud=%llu | "
-        "cloud_frame=%s points=%llu",
+        "rx/s odom=%llu cloud=%llu secondary_cloud=%llu | "
+        "tx/s vehicle=%llu imu=%llu cloud=%llu | "
+        "cloud_frame=%s points=%llu secondary_points=%llu stale_secondary=%llu",
         static_cast<unsigned long long>(odom), static_cast<unsigned long long>(cloud),
+        static_cast<unsigned long long>(secondary_cloud),
         static_cast<unsigned long long>(vehicle_tx), static_cast<unsigned long long>(imu_tx),
         static_cast<unsigned long long>(cloud_tx), cloud_frame.c_str(),
-        static_cast<unsigned long long>(cloud_points));
+        static_cast<unsigned long long>(cloud_points),
+        static_cast<unsigned long long>(
+          secondary_points_merged_.load(std::memory_order_relaxed)),
+        static_cast<unsigned long long>(
+          stale_secondary_clouds_.load(std::memory_order_relaxed)));
     RCLCPP_INFO(
         get_logger(), "velocity estimate: %.3f m/s", velocity_norm_.load());
   }
 
   std::string odom_topic_;
   std::string cloud_topic_;
+  bool secondary_cloud_enabled_;
+  std::string secondary_cloud_topic_;
+  double secondary_cloud_max_age_;
+  double secondary_transform_x_;
+  double secondary_transform_y_;
+  double secondary_transform_z_;
+  double secondary_transform_yaw_deg_;
   std::string output_vehicle_topic_;
   std::string output_imu_topic_;
   std::string output_cloud_topic_;
@@ -499,8 +676,10 @@ private:
 
   rclcpp::CallbackGroup::SharedPtr odom_callback_group_;
   rclcpp::CallbackGroup::SharedPtr cloud_callback_group_;
+  rclcpp::CallbackGroup::SharedPtr secondary_cloud_callback_group_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr secondary_cloud_sub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr vehicle_pub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr imu_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_pub_;
@@ -509,13 +688,20 @@ private:
 
   std::atomic<uint64_t> odom_rx_{0};
   std::atomic<uint64_t> cloud_rx_{0};
+  std::atomic<uint64_t> secondary_cloud_rx_{0};
+  std::atomic<uint64_t> secondary_points_merged_{0};
+  std::atomic<uint64_t> stale_secondary_clouds_{0};
   std::atomic<uint64_t> odom_vehicle_tx_{0};
   std::atomic<uint64_t> odom_imu_tx_{0};
   std::atomic<uint64_t> cloud_tx_{0};
   std::atomic<double> velocity_norm_{0.0};
   std::atomic<bool> odom_seen_{false};
   std::atomic<bool> cloud_seen_{false};
+  std::atomic<bool> secondary_cloud_seen_{false};
   std::mutex state_mutex_;
+  mutable std::mutex secondary_cloud_mutex_;
+  sensor_msgs::msg::PointCloud2::ConstSharedPtr latest_secondary_cloud_;
+  double latest_secondary_receive_sec_ = 0.0;
   std::string cloud_frame_;
   uint64_t cloud_points_ = 0;
 };

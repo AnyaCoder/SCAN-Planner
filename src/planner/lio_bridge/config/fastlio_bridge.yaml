@@ -6,3 +6,10 @@ lio_bridge:
     world_alignment_w: 0.9999758047
     cloud_max_z: 1.0
     align_base_on_start: true
+    secondary_cloud_enabled: true
+    secondary_cloud_topic: /utlidar/cloud_base
+    secondary_cloud_max_age: 0.20
+    secondary_transform_x: -0.2337208605
+    secondary_transform_y: 0.1013372867
+    secondary_transform_z: 0.0
+    secondary_transform_yaw_deg: -1.969417957

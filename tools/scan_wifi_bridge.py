@@ -25,7 +25,12 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.serialization import deserialize_message, serialize_message
 
-from geometry_msgs.msg import PointStamped, PoseStamped, PoseWithCovarianceStamped
+from geometry_msgs.msg import (
+    PointStamped,
+    PoseStamped,
+    PoseWithCovarianceStamped,
+    Twist,
+)
 from nav_msgs.msg import Odometry, Path
 from sensor_msgs.msg import JointState, PointCloud2
 from std_msgs.msg import Float32, String
@@ -93,6 +98,7 @@ UPLINK = [
 DOWNLINK = [
     Topic("/move_base_simple/goal", "geometry_msgs/msg/PoseStamped", PoseStamped),
     Topic("/clicked_point", "geometry_msgs/msg/PointStamped", PointStamped),
+    Topic("/cmd_vel", "geometry_msgs/msg/Twist", Twist),
     Topic(
         "/initialpose",
         "geometry_msgs/msg/PoseWithCovarianceStamped",
@@ -677,7 +683,7 @@ def main():
     mode.add_argument("--client", action="store_true")
     parser.add_argument("--bind", default="0.0.0.0")
     parser.add_argument(
-        "--host", default=os.environ.get("GO2_WIFI_HOST", "192.168.77.18")
+        "--host", default=os.environ.get("GO2_WIFI_HOST", "192.168.77.2")
     )
     parser.add_argument("--port", type=int, default=9000)
     parser.add_argument(

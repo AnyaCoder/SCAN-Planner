@@ -381,7 +381,7 @@ int main(int argc, char** argv) {
   std::string output_topic = "/go2/front_camera/image_raw";
   const char* robot_host_env = std::getenv("GO2_WIFI_HOST");
   const std::string robot_host =
-      robot_host_env == nullptr ? "192.168.77.18" : robot_host_env;
+      robot_host_env == nullptr ? "192.168.77.2" : robot_host_env;
   std::string detections_url =
       "http://" + robot_host + ":8767/latest_detections.json";
   std::string semantic_url = "http://" + robot_host + ":8768/overlay.jpg";

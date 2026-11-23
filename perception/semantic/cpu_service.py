@@ -2,12 +2,10 @@
 """Low-rate indoor semantic segmentation service for the Go2 camera."""
 
 import argparse
-import json
 import os
 import time
 
 import cv2
-import numpy as np
 import torch
 from transformers import AutoImageProcessor, SegformerForSemanticSegmentation
 
@@ -68,7 +66,7 @@ def main():
     parser.add_argument(
         "--url",
         default="http://%s:8765/frame.jpg"
-        % os.environ.get("GO2_WIFI_HOST", "192.168.77.18"),
+        % os.environ.get("GO2_WIFI_HOST", "192.168.77.2"),
     )
     parser.add_argument(
         "--model",

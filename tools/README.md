@@ -63,7 +63,7 @@ On the workstation:
 
 ```bash
 python3 tools/scan_wifi_bridge.py \
-  --client --host 192.168.77.18 --port 9000
+  --client --host 192.168.77.2 --port 9000
 ```
 
 The bridge keeps only the newest sample per topic, rejects stale backlogs, and
@@ -79,16 +79,16 @@ Each client can limit the uplink topics it receives:
 ```bash
 # Full SCAN visualization, the default
 python3 tools/scan_wifi_bridge.py \
-  --client --host 192.168.77.18 --port 9000
+  --client --host 192.168.77.2 --port 9000
 
 # Point cloud and pose only
 python3 tools/scan_wifi_bridge.py \
-  --client --host 192.168.77.18 --port 9000 \
+  --client --host 192.168.77.2 --port 9000 \
   --topics /LIO/clouds_lidar,/LIO/odom_vehicle,/tf,/tf_static
 
 # Control/downlink only; receive no uplink topics
 python3 tools/scan_wifi_bridge.py \
-  --client --host 192.168.77.18 --port 9000 --topics none
+  --client --host 192.168.77.2 --port 9000 --topics none
 ```
 
 The filter is negotiated during the clock handshake. Topics not requested by
@@ -101,7 +101,7 @@ use global `--compress` only on a severely bandwidth-limited link.
 `start_scan_stack.sh` starts and stops both ends automatically.
 
 The workstation pulls the Go2 front camera directly from
-`http://192.168.77.18:8765/frame.jpg` over Wi-Fi, without adding a ROS node on
+`http://192.168.77.2:8765/frame.jpg` over Wi-Fi, without adding a ROS node on
 the robot or passing camera frames through the state bridge. A separate
 `front_camera_relay.py` process publishes `CompressedImage`, then the C++
 `image_transport republish` node decodes it to
@@ -109,7 +109,7 @@ the robot or passing camera frames through the state bridge. A separate
 The workstation needs `ros-foxy-compressed-image-transport`.
 Both the front camera and VLM overlay start by default with the full stack. Set
 `SCAN_CAMERA_ENABLE=0` to disable the camera, or `SCAN_VLM_ENABLE=0` to keep the
-camera but skip VLM candidate generation.
+camera but skip VLM navigation requests.
 The Unitree source is 1920x1080; `front_camera_bridge.py` downsamples it to
 1280x720 before JPEG encoding. The default is 5 Hz, about 0.45 MB/s; raise it
 with `SCAN_CAMERA_FPS=15` if needed. Disable the camera with
@@ -130,8 +130,9 @@ coordinate system as `CameraInfo`, SegFormer masks, and camera projections.
 Set `SCAN_OVERLAY_WIDTH` only when a smaller display is explicitly desired.
 
 For pixel-to-world validation, start the VLM shadow node with
-`./tools/start_vlm_pixel_shadow.sh`. The VLM makes one low-reasoning request,
-returns a normalized floor pixel, and the node locks that point in the world.
+`./tools/start_vlm_pixel_shadow.sh`. The VLM first returns one normalized
+camera-floor point such as `point: 0.62 0.41`. It requests the top-down fallback
+only when the camera is blocked by a nearby wall or cannot see floor.
 The launcher now defaults to the multimodal
 `unsloth/Qwen3.5-27B-GGUF` llama.cpp server behind an SSH tunnel to
 `AnyaCoder@10.126.62.90:127.0.0.1:8001`. Set
@@ -151,10 +152,25 @@ and never locked.
 Navigation is approval-gated. A locked point does not publish anything to
 `/move_base_simple/goal` until `批准并发送到 SCAN` is clicked in the
 `VLM Approval` RViz panel. Approval publishes exactly one goal to SCAN;
-`让 VLM 重选` clears the locked point, marker, and approval state, then
-requests a new low-reasoning selection. SCAN still performs its normal
-planning, collision checks, and emergency stop. Set `SCAN_VLM_DRIVE=0` for
-display-only validation.
+`让 VLM 重选` clears the locked point, marker, and approval state, captures a
+fresh text-free front-camera image and 10 m point-cloud image with the current
+`/LIO/odom_vehicle` pose, and sends the two images separately in camera-then-map
+order. The long-running collector holds only the latest five seconds of MID-360
+and Go2 native LiDAR frames in memory. It writes no repeated images; every VLM
+query or reselect triggers one on-demand render. Both LiDARs are transformed to
+a shared world frame using each frame's own odometry stamp, fused there, and then
+transformed once into the current Go2 IMU frame. Floor returns are gray,
+obstacles are green/cyan, and returns above 1.20 m are removed before rendering.
+The model returns no route list or candidate enumeration. The node preserves
+the model-selected normalized point as the world target and only validates that
+gray floor exists within 0.20 m and that the center is not a green obstacle.
+SCAN-Planner remains responsible for the actual path and collision checks.
+SCAN still performs its normal planning, collision checks, and emergency stop.
+Set `SCAN_VLM_DRIVE=0` for display-only validation.
+
+The current general-purpose VLM was not trained on this rendered top-down map.
+Camera-point projection is the primary path; the top-down fallback is unstable
+and should not be treated as a validated semantic-navigation capability.
 
 Build the workstation node once:
 

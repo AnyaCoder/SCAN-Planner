@@ -9,6 +9,7 @@ REMOTE_ROOT=${SCAN_REMOTE_ROOT:-$REMOTE_HOME/SCAN-Planner}
 REMOTE_GRAPH_WS=${SCAN_REMOTE_GRAPH_WS:-/unitree/module/graph_pid_ws}
 REMOTE_FASTLIO_WS=${SCAN_REMOTE_FASTLIO_WS:-$REMOTE_HOME/fastlio_ws}
 REMOTE_DDS_CONFIG=${SCAN_REMOTE_DDS_CONFIG:-$REMOTE_HOME/.config/ros2/cyclonedds.xml}
+SAVE_MAP_ON_STOP=${SCAN_SAVE_MAP_ON_STOP:-0}
 remote_stop_group() {
   local name=$1
   local pattern=$2
@@ -115,8 +116,12 @@ remote_stop_group "SCAN-Planner" \
   'scan_planner_node|closed_loop_controller|open_loop_controller|go2_robot_state_publisher|cmd_vel_sport_bridge|scan_planner run\.launch\.py|cmd_vel_sport_bridge\.launch\.py'
 remote_stop_group "lio_bridge" \
   'lio_bridge_node|lio_bridge fastlio_bridge\.launch\.py'
-printf '保存 FAST-LIO2 全局点云...\n'
-remote_save_map || printf '  警告: /map_save 调用失败\n' >&2
+if [[ "$SAVE_MAP_ON_STOP" == "1" ]]; then
+  printf '保存 FAST-LIO2 全局点云...\n'
+  remote_save_map || printf '  警告: /map_save 调用失败\n' >&2
+else
+  printf '跳过 FAST-LIO2 点云保存。\n'
+fi
 remote_stop_group "FAST-LIO2" \
   'fastlio_mapping|fast_lio mapping\.launch\.py'
 remote_stop_group "Livox driver" \

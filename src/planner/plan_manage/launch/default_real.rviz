@@ -5,7 +5,7 @@ Panels:
     Property Tree Widget:
       Expanded: ~
       Splitter Ratio: 0.5
-    Tree Height: 1206
+    Tree Height: 1128
   - Class: rviz_common/Selection
     Name: Selection
   - Class: rviz_common/Tool Properties
@@ -217,9 +217,6 @@ Visualization Manager:
           Show Axes: false
           Show Trail: false
           Value: true
-      Mass Properties:
-        Inertia: false
-        Mass: false
       Name: Go2
       TF Prefix: ""
       Update Interval: 0
@@ -262,11 +259,10 @@ Visualization Manager:
       Topic:
         Depth: 10
         Durability Policy: Volatile
-        Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /quad_0/path
-      Value: true
+      Value: false
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
@@ -294,21 +290,20 @@ Visualization Manager:
       Topic:
         Depth: 1
         Durability Policy: Transient Local
-        Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /map_generator/global_cloud
       Use Fixed Frame: true
       Use rainbow: true
-      Value: true
+      Value: false
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
       Name: Clicked Waypoints
-      Namespaces: {}
+      Namespaces:
+        {}
       Topic:
         Depth: 5
         Durability Policy: Transient Local
-        Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /clicked_waypoints
@@ -316,7 +311,9 @@ Visualization Manager:
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
       Name: VLM Pixel Shadow
-      Namespaces: {}
+      Namespaces:
+        vlm_pixel_ray: true
+        vlm_pixel_target: true
       Topic:
         Depth: 1
         Durability Policy: Transient Local
@@ -351,7 +348,6 @@ Visualization Manager:
       Topic:
         Depth: 5
         Durability Policy: Volatile
-        Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Best Effort
         Value: /LIO/clouds_lidar
@@ -361,8 +357,8 @@ Visualization Manager:
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
-        Max Value: 0.574999988079071
-        Min Value: -0.125
+        Max Value: 0.32499998807907104
+        Min Value: -1.4249999523162842
         Value: true
       Axis: Z
       Channel Name: intensity
@@ -385,7 +381,6 @@ Visualization Manager:
       Topic:
         Depth: 5
         Durability Policy: Volatile
-        Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Best Effort
         Value: /grid_map/occupancy
@@ -395,8 +390,8 @@ Visualization Manager:
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
-        Max Value: 0.574999988079071
-        Min Value: -0.5249999761581421
+        Max Value: 0.32499998807907104
+        Min Value: -1.725000023841858
         Value: true
       Axis: Z
       Channel Name: intensity
@@ -419,7 +414,6 @@ Visualization Manager:
       Topic:
         Depth: 5
         Durability Policy: Volatile
-        Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Best Effort
         Value: /grid_map/occupancy_inflate
@@ -434,7 +428,6 @@ Visualization Manager:
       Topic:
         Depth: 5
         Durability Policy: Volatile
-        Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /grid_map/sliding_map_bbox
@@ -443,11 +436,10 @@ Visualization Manager:
       Enabled: true
       Name: Goal
       Namespaces:
-        "": true
+        {}
       Topic:
         Depth: 5
         Durability Policy: Volatile
-        Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /goal_point
@@ -460,7 +452,6 @@ Visualization Manager:
       Topic:
         Depth: 5
         Durability Policy: Transient Local
-        Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /self_inflation
@@ -469,11 +460,10 @@ Visualization Manager:
       Enabled: true
       Name: Global Trajectory
       Namespaces:
-        "": true
+        {}
       Topic:
         Depth: 5
         Durability Policy: Transient Local
-        Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /global_list
@@ -541,11 +531,13 @@ Visualization Manager:
           Value: true
         base:
           Value: true
+        body:
+          Value: true
         front_camera:
           Value: true
-        imu_link:
+        go2_front_camera_optical_frame:
           Value: true
-        sensor:
+        imu_link:
           Value: true
         sliding_map:
           Value: true
@@ -561,57 +553,22 @@ Visualization Manager:
       Tree:
         world:
           base:
+            body:
+              go2_front_camera_optical_frame:
+                {}
             trunk:
-              FL_hip:
-                FL_thigh:
-                  FL_calf:
-                    FL_foot:
-                      {}
-                  FL_calf_rotor:
-                    {}
-                FL_thigh_rotor:
-                  {}
               FL_hip_rotor:
                 {}
-              FR_hip:
-                FR_thigh:
-                  FR_calf:
-                    FR_foot:
-                      {}
-                  FR_calf_rotor:
-                    {}
-                FR_thigh_rotor:
-                  {}
               FR_hip_rotor:
                 {}
-              RL_hip:
-                RL_thigh:
-                  RL_calf:
-                    RL_foot:
-                      {}
-                  RL_calf_rotor:
-                    {}
-                RL_thigh_rotor:
-                  {}
               RL_hip_rotor:
                 {}
-              RR_hip:
-                RR_thigh:
-                  RR_calf:
-                    RR_foot:
-                      {}
-                  RR_calf_rotor:
-                    {}
-                RR_thigh_rotor:
-                  {}
               RR_hip_rotor:
                 {}
               front_camera:
                 {}
               imu_link:
                 {}
-          sensor:
-            {}
           sliding_map:
             {}
       Update Interval: 0
@@ -620,11 +577,10 @@ Visualization Manager:
       Enabled: true
       Name: Optimal Trajectory
       Namespaces:
-        "": true
+        {}
       Topic:
         Depth: 5
         Durability Policy: Volatile
-        Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /optimal_list
@@ -672,16 +628,16 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 8.0
+      Distance: 8
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 0.0
-        Y: 0.0
-        Z: 0.3
+        X: 0
+        Y: 0
+        Z: 0.30000001192092896
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
@@ -695,16 +651,20 @@ Visualization Manager:
 Window Geometry:
   Displays:
     collapsed: false
-  Height: 1472
+  Front Camera:
+    collapsed: false
+  Height: 1536
   Hide Left Dock: false
   Hide Right Dock: false
-  QMainWindow State: 000000ff00000000fd00000001000000000000032f00000524fc0200000004fb000000100044006900730070006c006100790073010000006e000005240000018200fffffffb0000001200530065006c0065006300740069006f006e000000031d00000135000000b000fffffffb0000001e0054006f006f006c002000500072006f007000650072007400690065007300000003f900000199000000b000fffffffb0000000a00560069006500770073000000041b000001770000013200ffffff000006410000052400000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  QMainWindow State: 000000ff00000000fd00000002000000000000026d000005a0fc0200000005fb000000100044006900730070006c0061007900730100000040000004aa000000ce00fffffffb0000001200530065006c0065006300740069006f006e000000031d000001350000005e00fffffffb0000001e0054006f006f006c002000500072006f007000650072007400690065007300000003f9000001990000005e00fffffffb0000000a00560069006500770073000000041b00000177000000ac00fffffffb0000001800460072006f006e0074002000430061006d00650072006101000004f0000000f00000002a00ffffff00000001000003d3000005a0fc0200000001fb000000180056004c004d00200041007000700072006f00760061006c0100000040000005a00000030600ffffff0000036c000005a000000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   Selection:
     collapsed: false
   Tool Properties:
     collapsed: false
+  VLM Approval:
+    collapsed: false
   Views:
     collapsed: false
-  Width: 2428
-  X: 132
-  Y: 54
+  Width: 2488
+  X: 72
+  Y: 27

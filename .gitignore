@@ -13,6 +13,7 @@
 *.bag
 *.db3
 *.mcap
+/pointcloud_views/
 
 # Local perception models and runtime environments
 /perception/.venv/

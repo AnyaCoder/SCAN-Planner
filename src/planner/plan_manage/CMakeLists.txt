@@ -55,7 +55,7 @@ add_library(vlm_approval_panel SHARED
   include/plan_manage/vlm_approval_panel.hpp)
 target_include_directories(vlm_approval_panel PRIVATE include)
 ament_target_dependencies(vlm_approval_panel
-  rclcpp rviz_common std_msgs jsoncpp)
+  rclcpp rviz_common sensor_msgs std_msgs jsoncpp)
 target_link_libraries(vlm_approval_panel
   Qt5::Widgets jsoncpp_lib)
 pluginlib_export_plugin_description_file(rviz_common
@@ -88,8 +88,14 @@ install(PROGRAMS
 
 if(BUILD_TESTING)
   find_package(launch_testing_ament_cmake REQUIRED)
+  find_package(ament_cmake_pytest REQUIRED)
   add_launch_test(test/test_planner_startup.py TIMEOUT 30)
   add_launch_test(test/test_waypoint_parameters.py TIMEOUT 30)
+  ament_add_pytest_test(test_vlm_common test/test_vlm_common.py)
+  ament_add_pytest_test(
+    test_vlm_topdown_projection
+    test/test_vlm_topdown_projection.py
+  )
 endif()
 
 ament_package()

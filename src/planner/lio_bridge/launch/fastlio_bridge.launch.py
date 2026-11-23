@@ -18,6 +18,13 @@ def generate_launch_description():
         DeclareLaunchArgument("velocity_deadband", default_value="0.12"),
         DeclareLaunchArgument("max_velocity", default_value="2.0"),
         DeclareLaunchArgument("max_timestamp_gap_sec", default_value="0.25"),
+        DeclareLaunchArgument("secondary_cloud_enabled", default_value="true"),
+        DeclareLaunchArgument("secondary_cloud_topic", default_value="/utlidar/cloud_base"),
+        DeclareLaunchArgument("secondary_cloud_max_age", default_value="0.20"),
+        DeclareLaunchArgument("secondary_transform_x", default_value="-0.2337208605"),
+        DeclareLaunchArgument("secondary_transform_y", default_value="0.1013372867"),
+        DeclareLaunchArgument("secondary_transform_z", default_value="0.0"),
+        DeclareLaunchArgument("secondary_transform_yaw_deg", default_value="-1.969417957"),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
         Node(
             package="lio_bridge",
@@ -29,6 +36,20 @@ def generate_launch_description():
                 {
                     "odom_topic": "/Odometry",
                     "cloud_topic": "/cloud_registered_body",
+                    "secondary_cloud_enabled": LaunchConfiguration(
+                        "secondary_cloud_enabled"),
+                    "secondary_cloud_topic": LaunchConfiguration(
+                        "secondary_cloud_topic"),
+                    "secondary_cloud_max_age": LaunchConfiguration(
+                        "secondary_cloud_max_age"),
+                    "secondary_transform_x": LaunchConfiguration(
+                        "secondary_transform_x"),
+                    "secondary_transform_y": LaunchConfiguration(
+                        "secondary_transform_y"),
+                    "secondary_transform_z": LaunchConfiguration(
+                        "secondary_transform_z"),
+                    "secondary_transform_yaw_deg": LaunchConfiguration(
+                        "secondary_transform_yaw_deg"),
                     "output_vehicle_topic": "/LIO/odom_vehicle",
                     "output_imu_topic": "/LIO/odom_imu",
                     "output_cloud_topic": "/LIO/clouds_lidar",

@@ -3,7 +3,7 @@
 
 # Keep the Wi-Fi address in one place. Override GO2_HOST for an SSH alias and
 # GO2_WIFI_HOST when the workstation uses the robot's direct hotspot instead.
-GO2_WIFI_HOST=${GO2_WIFI_HOST:-192.168.77.18}
+GO2_WIFI_HOST=${GO2_WIFI_HOST:-192.168.77.2}
 GO2_HOST=${GO2_HOST:-unitree@$GO2_WIFI_HOST}
 
 wait_local_topic() {
